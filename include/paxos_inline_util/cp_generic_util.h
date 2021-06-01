@@ -2,14 +2,14 @@
 // Created by vasilis on 11/05/20.
 //
 
-#ifndef KITE_GENERIC_UTILITY_H
-#define KITE_GENERIC_UTILITY_H
+#ifndef CP_GENERIC_UTILITY_H
+#define CP_GENERIC_UTILITY_H
 
 
 #include <stdint.h>
-#include <config.h>
-#include "main.h"
-#include "generic_inline_util.h"
+#include <cp_config.h>
+#include "cp_main.h"
+#include "od_generic_inline_util.h"
 
 
 
@@ -424,4 +424,4 @@ static inline bool same_rmw_id_same_log(mica_op_t *kv_ptr, loc_entry_t *loc_entr
          loc_entry->log_no == kv_ptr->log_no;
 }
 
-#endif //KITE_GENERIC_UTILITY_H
+#endif //CP_GENERIC_UTILITY_H

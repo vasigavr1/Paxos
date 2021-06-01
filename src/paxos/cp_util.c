@@ -1,7 +1,7 @@
-#include <rdma_gen_util.h>
-#include "../../../odlib/include/trace/trace_util.h"
-#include "util.h"
-#include "generic_inline_util.h"
+#include <od_rdma_gen_util.h>
+#include "od_trace_util.h"
+#include "cp_util.h"
+#include "od_generic_inline_util.h"
 
 struct bit_vector send_bit_vector;
 struct multiple_owner_bit conf_bit_vec[MACHINE_NUM];
@@ -15,7 +15,7 @@ FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 FILE* client_log[CLIENTS_PER_MACHINE];
 
 
-void kite_static_assert_compile_parameters()
+void cp_static_assert_compile_parameters()
 {
   static_assert(RMW_ACK_BASE_TS_STALE > RMW_ACK, "assumption used to check if replies are acks");
   static_assert(PAXOS_TS > ALL_ABOARD_TS, "Paxos TS must be bigger than ALL Aboard TS");
@@ -112,7 +112,7 @@ void kite_static_assert_compile_parameters()
                 "All-aboard does not work with the RC semantics");
 }
 
-void kite_print_parameters_in_the_start()
+void cp_print_parameters_in_the_start()
 {
   emphatic_print(green, "KITE");
   if (ENABLE_ASSERTIONS) {
@@ -163,7 +163,7 @@ void kite_print_parameters_in_the_start()
   }
 }
 
-void kite_init_globals()
+void cp_init_globals()
 {
   uint32_t i = 0;
   epoch_id = MEASURE_SLOW_PATH ? 1 : 0;
@@ -236,7 +236,7 @@ void randomize_op_values(trace_op_t *ops, uint16_t t_id)
 ------------------------------KITE WORKER --------------------------------------
 ---------------------------------------------------------------------------*/
 
-void kite_init_qp_meta(context_t *ctx)
+void cp_init_qp_meta(context_t *ctx)
 {
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS,
@@ -272,9 +272,9 @@ void kite_init_qp_meta(context_t *ctx)
                      REM_MACH_NUM, W_CREDITS);
 }
 
-kite_debug_t *init_debug_loop_struct()
+cp_debug_t *init_debug_loop_struct()
 {
-  kite_debug_t *loop_dbg = calloc(1, sizeof(kite_debug_t));
+  cp_debug_t *loop_dbg = calloc(1, sizeof(cp_debug_t));
   if (DEBUG_SESSIONS) {
     loop_dbg->ses_dbg = (struct session_dbg *) malloc(sizeof(struct session_dbg));
     memset(loop_dbg->ses_dbg, 0, sizeof(struct session_dbg));
@@ -282,7 +282,7 @@ kite_debug_t *init_debug_loop_struct()
   return loop_dbg;
 }
 // Initialize the pending ops struct
-p_ops_t* set_up_pending_ops(context_t *ctx)
+p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 {
   uint32_t pending_reads = (uint32_t) PENDING_READS;
   uint32_t pending_writes = (uint32_t) PENDING_WRITES;

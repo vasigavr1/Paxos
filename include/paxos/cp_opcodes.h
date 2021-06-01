@@ -2,8 +2,8 @@
 // Created by vasilis on 27/04/20.
 //
 
-#ifndef KITE_OPCODES_H
-#define KITE_OPCODES_H
+#ifndef CP_OPCODES_H
+#define CP_OPCODES_H
 
 
 
@@ -207,4 +207,4 @@ enum {
 
 enum {NO_REASON = 0, STALLED_BECAUSE_ACC_RELEASE = 1, STALLED_BECAUSE_NOT_ENOUGH_REPS};
 
-#endif //KITE_OPCODES_H
+#endif //CP_OPCODES_H

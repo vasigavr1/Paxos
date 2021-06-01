@@ -2,8 +2,8 @@
 // Created by vasilis on 22/05/20.
 //
 
-#ifndef KITE_BUFFER_SIZES_H
-#define KITE_BUFFER_SIZES_H
+#ifndef CP_BUFFER_SIZES_H
+#define CP_BUFFER_SIZES_H
 
 
 // BUFFER SIZES
@@ -43,4 +43,4 @@
 
 
 
-#endif //KITE_BUFFER_SIZES_H
+#endif //CP_BUFFER_SIZES_H

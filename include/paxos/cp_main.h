@@ -1,14 +1,14 @@
-#ifndef KITE_MAIN_H
-#define KITE_MAIN_H
+#ifndef CP_MAIN_H
+#define CP_MAIN_H
 
 #include <stdint.h>
 #include <pthread.h>
 #include <stdint-gcc.h>
-#include "city.h"
-#include "config.h"
-#include "messages.h"
-#include "buffer_sizes.h"
-#include "stats.h"
+#include "od_city.h"
+#include "cp_config.h"
+#include "cp_messages.h"
+#include "cp_buffer_sizes.h"
+#include "od_stats.h"
 
 
 // RMWs
@@ -251,7 +251,7 @@ struct pending_out_of_epoch_writes {
 };
 
 typedef struct trace_op trace_op_t;
-typedef struct kite_p_ops_debug kite_debug_t;
+typedef struct cp_p_ops_debug cp_debug_t;
 
 typedef struct pending_ops {
 	write_fifo_t *w_fifo;
@@ -301,7 +301,7 @@ typedef struct pending_ops {
   uint32_t full_w_q_fifo;
   bool all_sessions_stalled;
   quorum_info_t *q_info;
-  kite_debug_t *debug_loop;
+  cp_debug_t *debug_loop;
 } p_ops_t;
 
 // A helper to debug sessions by remembering which write holds a given session
@@ -311,14 +311,14 @@ struct session_dbg {
 	//uint32_t request_id[SESSIONS_PER_THREAD];
 };
 
-typedef struct kite_p_ops_debug {
+typedef struct cp_p_ops_debug {
   bool slept;
   uint64_t loop_counter;
   uint32_t sizes_dbg_cntr;
   uint64_t debug_lids;
   uint32_t release_rdy_dbg_cnt;
   struct session_dbg *ses_dbg;
-} kite_debug_t;
+} cp_debug_t;
 
 // Registering data structure
 extern atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];

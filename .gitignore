@@ -4,10 +4,10 @@ build
 .idea/*
 *.out
 *.csv
-src/kite/Makefile
+src/paxos/Makefile
 src/PaxosVerifier/pv
 src/PaxosVerifier/copy_from_remote_machines
-src/kite/profile_info
+src/paxos/profile_info
 cmake-build-debug
 bin/clean-pages.sh
 bin/install-dependencies.sh

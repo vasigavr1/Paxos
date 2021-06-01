@@ -1,8 +1,8 @@
-#include "util.h"
+#include "cp_util.h"
 
 void print_latency_stats(void);
 
-void kite_stats(stats_ctx_t *ctx)
+void cp_stats(stats_ctx_t *ctx)
 {
 
   double seconds = ctx-> seconds;

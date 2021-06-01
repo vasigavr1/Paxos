@@ -2,14 +2,14 @@
 // Created by vasilis on 11/05/20.
 //
 
-#ifndef KITE_DEBUG_UTIL_H
-#define KITE_DEBUG_UTIL_H
+#ifndef CP_DEBUG_UTIL_H
+#define CP_DEBUG_UTIL_H
 
-#include <config.h>
-#include "config.h"
-#include "main.h"
-#include "generic_util.h"
-#include "debug_util.h"
+#include <cp_config.h>
+#include "cp_config.h"
+#include "cp_main.h"
+#include "cp_generic_util.h"
+#include "od_debug_util.h"
 
 
 /* ---------------------------------------------------------------------------
@@ -1717,4 +1717,4 @@ static inline void checks_when_posting_write_receives(recv_info_t *w_recv_info, 
 }
 
 
-#endif //KITE_DEBUG_UTIL_H
+#endif //CP_DEBUG_UTIL_H

@@ -2,8 +2,8 @@
 // Created by vasilis on 22/05/20.
 //
 
-#ifndef KITE_MESSAGES_H
-#define KITE_MESSAGES_H
+#ifndef CP_MESSAGES_H
+#define CP_MESSAGES_H
 
 
 // post some extra receives to avoid spurious out_of_buffer errors
@@ -317,4 +317,4 @@ struct r_message_template {
   uint8_t unused[ALIGNED_R_SEND_SIDE];
 };
 
-#endif //KITE_MESSAGES_H
+#endif //CP_MESSAGES_H

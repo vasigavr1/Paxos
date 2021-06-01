@@ -2,11 +2,11 @@
 // Created by vasilis on 22/05/20.
 //
 
-#ifndef KITE_PAXOS_UTIL_H
-#define KITE_PAXOS_UTIL_H
+#ifndef CP_PAXOS_UTIL_H
+#define CP_PAXOS_UTIL_H
 
-#include <config.h>
-#include "paxos_generic_util.h"
+#include <cp_config.h>
+#include "cp_paxos_generic_util.h"
 
 
 /*--------------------------------------------------------------------------
@@ -1490,4 +1490,4 @@ static inline void insert_rmw(p_ops_t *p_ops, trace_op_t *op,
 }
 
 
-#endif //KITE_PAXOS_UTIL_H
+#endif //CP_PAXOS_UTIL_H

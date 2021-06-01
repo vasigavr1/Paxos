@@ -2,12 +2,12 @@
 // Created by vasilis on 11/05/20.
 //
 
-#ifndef KITE_CONFIG_UTIL_H
-#define KITE_CONFIG_UTIL_H
+#ifndef CP_CONFIG_UTIL_H
+#define CP_CONFIG_UTIL_H
 
-#include "config_util.h"
-#include "config.h"
-#include "main.h"
+#include "od_config_util.h"
+#include "cp_config.h"
+#include "cp_main.h"
 /* ---------------------------------------------------------------------------
 //------------------------------ CONF BITS HANDLERS---------------------------
 //---------------------------------------------------------------------------*/
@@ -430,4 +430,4 @@ static inline void detect_false_positives_on_read_info_bookkeeping(struct r_rep_
 
 
 
-#endif //KITE_CONFIG_UTIL_H
+#endif //CP_CONFIG_UTIL_H

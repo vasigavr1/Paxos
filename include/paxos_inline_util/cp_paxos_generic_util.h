@@ -2,15 +2,15 @@
 // Created by vasilis on 22/05/20.
 //
 
-#ifndef KITE_PAXOS_GENERIC_UTILITY_H
-#define KITE_PAXOS_GENERIC_UTILITY_H
+#ifndef CP_PAXOS_GENERIC_UTILITY_H
+#define CP_PAXOS_GENERIC_UTILITY_H
 
-#include <config.h>
-#include "main.h"
-#include "kite_debug_util.h"
-#include "wrkr_side_calls.h"
-#include "kite_config_util.h"
-#include "reserve_stations_util.h"
+#include <cp_config.h>
+#include "cp_main.h"
+#include "cp_debug_util.h"
+#include "od_wrkr_side_calls.h"
+#include "cp_config_util.h"
+#include "cp_reserve_stations_util.h"
 
 
 
@@ -499,4 +499,4 @@ static inline void fill_reply_entry_with_committed_RMW (mica_op_t *kv_ptr,
 
 
 
-#endif //KITE_PAXOS_GENERIC_UTILITY_H
+#endif //CP_PAXOS_GENERIC_UTILITY_H

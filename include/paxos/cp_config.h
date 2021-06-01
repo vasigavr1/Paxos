@@ -2,8 +2,8 @@
 // Created by vasilis on 27/04/20.
 //
 
-#ifndef KITE_CONFIG_H
-#define KITE_CONFIG_H
+#ifndef CP_CONFIG_H
+#define CP_CONFIG_H
 
 
 #ifndef _GNU_SOURCE
@@ -11,14 +11,11 @@
 #endif
 
 
-
-
-
 // Generic header files
-#include "top.h"
-#include "opcodes.h"
+#include "od_top.h"
+#include "cp_opcodes.h"
 
-void kite_stats(stats_ctx_t *ctx);
+void cp_stats(stats_ctx_t *ctx);
 
 
 // CORE CONFIGURATION
@@ -121,4 +118,4 @@ typedef struct mica_op {
 
 
 
-#endif //KITE_CONFIG_H
+#endif //CP_CONFIG_H

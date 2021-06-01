@@ -2,15 +2,15 @@
 // Created by vasilis on 22/05/20.
 //
 
-#ifndef KITE_COMMUNICATION_UTILITY_H
-#define KITE_COMMUNICATION_UTILITY_H
+#ifndef CP_COMMUNICATION_UTILITY_H
+#define CP_COMMUNICATION_UTILITY_H
 
-#include "main.h"
-#include "latency_util.h"
-#include "kite_debug_util.h"
-#include "kite_config_util.h"
-#include "rdma_gen_util.h"
-#include "reserve_stations_util.h"
+#include "cp_main.h"
+#include "od_latency_util.h"
+#include "cp_debug_util.h"
+#include "cp_config_util.h"
+#include "od_rdma_gen_util.h"
+#include "cp_reserve_stations_util.h"
 
 
 static inline int find_how_many_write_messages_can_be_polled(struct ibv_cq *w_recv_cq, struct ibv_wc *w_recv_wc,
@@ -226,4 +226,4 @@ static inline bool ack_bookkeeping(ctx_ack_mes_t *ack, uint8_t w_num, uint64_t l
 }
 
 
-#endif //KITE_COMMUNICATION_UTILITY_H
+#endif //CP_COMMUNICATION_UTILITY_H

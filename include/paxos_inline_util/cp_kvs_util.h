@@ -2,16 +2,16 @@
 // Created by vasilis on 11/05/20.
 //
 
-#ifndef KITE_KVS_UTILITY_H
-#define KITE_KVS_UTILITY_H
+#ifndef CP_KVS_UTILITY_H
+#define CP_KVS_UTILITY_H
 
-#include <config.h>
-#include "kvs.h"
-#include "generic_util.h"
-#include "kite_debug_util.h"
-#include "kite_config_util.h"
-#include "wrkr_side_calls.h"
-#include "paxos_util.h"
+#include <cp_config.h>
+#include "od_kvs.h"
+#include "cp_generic_util.h"
+#include "cp_debug_util.h"
+#include "cp_config_util.h"
+#include "od_wrkr_side_calls.h"
+#include "cp_paxos_util.h"
 
 
 
@@ -908,4 +908,4 @@ static inline void KVS_isolated_op(int t_id, write_t *write)
 
 }
 
-#endif //KITE_KVS_UTILITY_H
+#endif //CP_KVS_UTILITY_H

@@ -1,18 +1,18 @@
-#ifndef KITE_UTILS_H
-#define KITE_UTILS_H
+#ifndef CP_UTILS_H
+#define CP_UTILS_H
 
 
 //#include "multicast.h"
-#include "kvs.h"
-#include "hrd.h"
-#include "main.h"
-#include "../../../odlib/include/network_api/network_context.h"
-#include <init_func.h>
+#include "od_kvs.h"
+#include "od_hrd.h"
+#include "cp_main.h"
+#include "od_network_context.h"
+#include <od_init_func.h>
 
 extern uint64_t seed;
-void kite_static_assert_compile_parameters();
-void kite_print_parameters_in_the_start();
-void kite_init_globals();
+void cp_static_assert_compile_parameters();
+void cp_print_parameters_in_the_start();
+void cp_init_globals();
 
 
 /* ---------------------------------------------------------------------------
@@ -57,9 +57,9 @@ void print_latency_stats(void);
 ---------------------------------------------------------------------------*/
 
 
-void kite_init_qp_meta(context_t *ctx);
+void cp_init_qp_meta(context_t *ctx);
 // Initialize the struct that holds all pending ops
-p_ops_t* set_up_pending_ops(context_t *ctx);
+p_ops_t* cp_set_up_pending_ops(context_t *ctx);
 
 void randomize_op_values(trace_op_t *ops, uint16_t t_id);
 
@@ -69,15 +69,15 @@ void randomize_op_values(trace_op_t *ops, uint16_t t_id);
 ---------------------------------------------------------------------------*/
 void print_latency_stats(void);
 
-static void kite_init_functionality(int argc, char *argv[])
+static void cp_init_functionality(int argc, char *argv[])
 {
-  kite_print_parameters_in_the_start();
+  cp_print_parameters_in_the_start();
   generic_static_assert_compile_parameters();
-  kite_static_assert_compile_parameters();
+  cp_static_assert_compile_parameters();
   generic_init_globals(QP_NUM);
-  kite_init_globals();
+  cp_init_globals();
   handle_program_inputs(argc, argv);
 }
 
 
-#endif /* KITE_UTILS_H */
+#endif /* CP_UTILS_H */

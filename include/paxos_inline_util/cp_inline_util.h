@@ -1,24 +1,24 @@
-#ifndef KITE_INLINE_UTIL_H
-#define KITE_INLINE_UTIL_H
+#ifndef CP_INLINE_UTIL_H
+#define CP_INLINE_UTIL_H
 
 //#include "kvs.h"
-#include "hrd.h"
+#include "od_hrd.h"
 
 
-#include "generic_util.h"
-#include "kvs_util.h"
-#include "kite_debug_util.h"
-#include "kite_config_util.h"
-#include "inline_util.h"
-#include "paxos_util.h"
-#include "reserve_stations_util.h"
-#include "communication_utility.h"
+#include "cp_generic_util.h"
+#include "cp_kvs_util.h"
+#include "cp_debug_util.h"
+#include "cp_config_util.h"
+#include "od_inline_util.h"
+#include "cp_paxos_util.h"
+#include "cp_reserve_stations_util.h"
+#include "cp_communication_utility.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <assert.h>
-#include <config.h>
+#include <cp_config.h>
 #include <infiniband/verbs.h>
 
 
@@ -935,7 +935,7 @@ static inline void remove_writes(p_ops_t *p_ops,
 }
 
 
-static inline void kite_checks_at_loop_start(context_t *ctx)
+static inline void cp_checks_at_loop_start(context_t *ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   //if (ENABLE_ASSERTIONS && CHECK_DBG_COUNTERS)
@@ -976,12 +976,12 @@ static inline void kite_checks_at_loop_start(context_t *ctx)
 }
 
 
-static void kite_main_loop(context_t *ctx)
+static void cp_main_loop(context_t *ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   while(true) {
 
-    kite_checks_at_loop_start(ctx);
+    cp_checks_at_loop_start(ctx);
     /* ---------------------------------------------------------------------------
 		------------------------------ POLL FOR WRITES--------------------------
 		---------------------------------------------------------------------------*/
@@ -1051,4 +1051,4 @@ static void kite_main_loop(context_t *ctx)
   }
 }
 
-#endif /* KITE_INLINE_UTIL_H */
+#endif /* CP_INLINE_UTIL_H */
