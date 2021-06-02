@@ -44,7 +44,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   }
   for (uint16_t i = 0; i < SESSIONS_PER_THREAD; i++) {
     uint16_t sess_i = (uint16_t)((p_ops->last_session + i) % SESSIONS_PER_THREAD);
-    if (pull_request_from_this_session(p_ops->sess_info[sess_i].stalled, sess_i, ctx->t_id)) {
+    if (od_pull_request_from_this_session(p_ops->sess_info[sess_i].stalled, sess_i, ctx->t_id)) {
       working_session = sess_i;
       break;
     }
@@ -63,8 +63,8 @@ static inline void batch_requests_to_KVS(context_t *ctx)
                       &reads_num, NULL, ctx->t_id))
       break;
     // Find out next session to work on
-    while (!pull_request_from_this_session(p_ops->sess_info[working_session].stalled,
-                                           (uint16_t) working_session, ctx->t_id)) {
+    while (!od_pull_request_from_this_session(p_ops->sess_info[working_session].stalled,
+                                              (uint16_t) working_session, ctx->t_id)) {
       debug_sessions(p_ops, (uint32_t) working_session, ctx->t_id);
       MOD_INCR(working_session, SESSIONS_PER_THREAD);
       if (working_session == p_ops->last_session) {
@@ -982,70 +982,33 @@ static void cp_main_loop(context_t *ctx)
   while(true) {
 
     cp_checks_at_loop_start(ctx);
-    /* ---------------------------------------------------------------------------
-		------------------------------ POLL FOR WRITES--------------------------
-		---------------------------------------------------------------------------*/
+
     poll_for_writes(ctx, W_QP_ID);
 
-    /* ---------------------------------------------------------------------------
-       ------------------------------ SEND ACKS----------------------------------
-       ---------------------------------------------------------------------------*/
-
     ctx_send_acks(ctx, ACK_QP_ID);
-    //send_acks(ctx);
 
-    /* ---------------------------------------------------------------------------
-		------------------------------ POLL FOR READS--------------------------
-		---------------------------------------------------------------------------*/
     poll_for_reads(ctx);
-
-    /* ---------------------------------------------------------------------------
-		------------------------------ SEND READ REPLIES--------------------------
-		---------------------------------------------------------------------------*/
 
     send_r_reps(ctx);
 
-    /* ---------------------------------------------------------------------------
-		------------------------------ POLL FOR READ REPLIES--------------------------
-		---------------------------------------------------------------------------*/
-
     poll_for_read_replies(ctx);
 
-    /* ---------------------------------------------------------------------------
-		------------------------------ COMMIT READS----------------------------------
-		---------------------------------------------------------------------------*/
     // Either commit a read or convert it into a write
     commit_reads(p_ops, ctx->t_id);
 
-    /* ---------------------------------------------------------------------------
-		------------------------------ INSPECT RMWS----------------------------------
-		---------------------------------------------------------------------------*/
     inspect_rmws(p_ops, ctx->t_id);
 
-    /* ---------------------------------------------------------------------------
-    ------------------------------ POLL FOR ACKS--------------------------------
-    ---------------------------------------------------------------------------*/
     poll_acks(ctx);
 
     remove_writes(p_ops, ctx->t_id);
 
-    /* ---------------------------------------------------------------------------
-    ------------------------------PROBE THE CACHE--------------------------------------
-    ---------------------------------------------------------------------------*/
-
     // Get a new batch from the trace, pass it through the kvs and create
     // the appropriate write/r_rep messages
     batch_requests_to_KVS(ctx);
-    /* ---------------------------------------------------------------------------
-		------------------------------BROADCAST READS--------------------------
-		---------------------------------------------------------------------------*/
+
     // Perform the r_rep broadcasts
     broadcast_reads(ctx);
 
-
-    /* ---------------------------------------------------------------------------
-     ------------------------------BROADCAST WRITES--------------------------
-     ---------------------------------------------------------------------------*/
     // Perform the write broadcasts
     broadcast_writes(ctx);
   }

@@ -72,11 +72,11 @@ void print_latency_stats(void);
 static void cp_init_functionality(int argc, char *argv[])
 {
   cp_print_parameters_in_the_start();
-  generic_static_assert_compile_parameters();
+	od_generic_static_assert_compile_parameters();
   cp_static_assert_compile_parameters();
-  generic_init_globals(QP_NUM);
+  od_generic_init_globals(QP_NUM);
   cp_init_globals();
-  handle_program_inputs(argc, argv);
+  od_handle_program_inputs(argc, argv);
 }
 
 
