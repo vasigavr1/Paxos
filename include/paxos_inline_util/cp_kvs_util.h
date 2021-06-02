@@ -47,134 +47,6 @@ static inline bool search_out_of_epoch_writes(p_ops_t *p_ops,
 
 /*-----------------------------FROM TRACE---------------------------------------------*/
 
-
-static inline bool KVS_from_trace_reads_value_forwarded(trace_op_t *op,
-                                                        mica_op_t *kv_ptr, kv_resp_t *resp,
-                                                        p_ops_t *p_ops, uint16_t t_id)
-{
-  if (TURN_OFF_KITE) return false;
-  bool value_forwarded = false; // has a pending out-of-epoch write forwarded its value to this
-  if (op->opcode == KVS_OP_GET && p_ops->p_ooe_writes->size > 0) {
-    uint8_t *val_ptr;
-    if (search_out_of_epoch_writes(p_ops, &op->key, t_id, (void **) &val_ptr)) {
-      memcpy(op->value_to_read, val_ptr, op->real_val_len);
-      //my_printf(red, "Wrkr %u Forwarding a value \n", t_id);
-      value_forwarded = true;
-    }
-  }
-  return value_forwarded;
-}
-
-// Handle a local read/acquire in the KVS
-static inline bool KVS_from_trace_reads(trace_op_t *op,
-                                        mica_op_t *kv_ptr, kv_resp_t *resp,
-                                        p_ops_t *p_ops,
-                                        uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) assert(op->real_val_len <= VALUE_SIZE);
-
-  resp->type = KVS_LOCAL_GET_SUCCESS;
-  if (KVS_from_trace_reads_value_forwarded(op, kv_ptr, resp, p_ops,t_id)) return true;
-
-  uint64_t kv_epoch = 0;
-  uint32_t debug_cntr = 0;
-
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    if (!TURN_OFF_KITE) kv_epoch = kv_ptr->epoch_id;
-    debug_stalling_on_lock(&debug_cntr, "trace read/acquire", t_id);
-    if (ENABLE_ASSERTIONS) assert(op->value_to_read != NULL);
-    memcpy(op->value_to_read, kv_ptr->value, op->real_val_len);
-    //printf("Reading val %u from key %u \n", kv_ptr->value[0], kv_ptr->key.bkt);
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-
-  if (TURN_OFF_KITE) {
-    return true;
-  }
-  else return kv_epoch >= epoch_id; //return success if the kv_epoch is not left behind the epoch-id
-}
-
-// Handle a local write in the KVS
-static inline void KVS_from_trace_writes(trace_op_t *op,
-                                         mica_op_t *kv_ptr, kv_resp_t *resp,
-                                         p_ops_t *p_ops, uint32_t *r_push_ptr_,
-                                         uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) assert(op->real_val_len <= VALUE_SIZE);
-//  if (ENABLE_ASSERTIONS) assert(op->val_len == kv_ptr->val_len);
-  lock_seqlock(&kv_ptr->seqlock);
-  // OUT_OF_EPOCH--first round will be a read TS
-  if (kv_ptr->epoch_id < epoch_id) {
-    uint32_t r_push_ptr = *r_push_ptr_;
-    r_info_t *r_info = &p_ops->read_info[r_push_ptr];
-    r_info->ts_to_read.m_id = kv_ptr->ts.m_id;
-    r_info->ts_to_read.version = kv_ptr->ts.version;
-    unlock_seqlock(&kv_ptr->seqlock);
-    r_info->opcode = op->opcode;
-    r_info->key = op->key;
-    r_info->r_ptr = r_push_ptr;
-    if (ENABLE_ASSERTIONS) op->ts.version = r_info->ts_to_read.version;
-    // Store the value to be written in the read_info to be used in the second round
-    memcpy(r_info->value, op->value_to_write, op->real_val_len);
-
-    //my_printf(yellow, "Out of epoch write key %u, node-next key_id %u \n",
-    //             op->key.bkt, new_node->next_key_id);
-    r_info->val_len = op->real_val_len;
-    p_ops->p_ooe_writes->r_info_ptrs[p_ops->p_ooe_writes->push_ptr] = r_push_ptr;
-    p_ops->p_ooe_writes->size++;
-    MOD_INCR(p_ops->p_ooe_writes->push_ptr, PENDING_READS);
-    MOD_INCR(r_push_ptr, PENDING_READS);
-    resp->type = KVS_GET_TS_SUCCESS;
-    (*r_push_ptr_) =  r_push_ptr;
-  }
-  else { // IN-EPOCH
-    if (ENABLE_ASSERTIONS) {
-      update_commit_logs(t_id, kv_ptr->key.bkt, op->ts.version, kv_ptr->value,
-                         op->value_to_write, "local write", LOG_WS);
-    }
-    write_kv_ptr_val(kv_ptr, op->value_to_write, op->real_val_len, FROM_TRACE_WRITE);
-    //printf("Wrote val %u to key %u \n", kv_ptr->value[0], kv_ptr->key.bkt);
-    // This also writes the new version to op
-    kv_ptr->ts.m_id = (uint8_t) machine_id;
-    kv_ptr->ts.version++;
-    op->ts.version = kv_ptr->ts.version;
-    unlock_seqlock(&kv_ptr->seqlock);
-    resp->type = KVS_PUT_SUCCESS;
-  }
-}
-
-
-// Handle a local release in the KVS
-static inline void KVS_from_trace_releases(trace_op_t *op,
-                                           mica_op_t *kv_ptr, kv_resp_t *resp,
-                                           p_ops_t *p_ops, uint32_t *r_push_ptr_,
-                                           uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) assert(op->real_val_len <= VALUE_SIZE);
-  struct ts_tuple kvs_tuple;
-  uint32_t r_push_ptr = *r_push_ptr_;
-  r_info_t *r_info = &p_ops->read_info[r_push_ptr];
-  uint32_t debug_cntr = 0;
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    kvs_tuple = kv_ptr->ts;
-    debug_stalling_on_lock(&debug_cntr, "trace releases", t_id);
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-
-  if (ENABLE_ASSERTIONS) op->ts.version = kvs_tuple.version;
-  r_info->ts_to_read.m_id = kvs_tuple.m_id;
-  r_info->ts_to_read.version = kvs_tuple.version;
-  r_info->key = op->key;
-  r_info->opcode = op->opcode;
-  r_info->r_ptr = r_push_ptr;
-  // Store the value to be written in the read_info to be used in the second round
-  memcpy(r_info->value, op->value_to_write, op->real_val_len);
-  r_info->val_len = op->real_val_len;
-  MOD_INCR(r_push_ptr, PENDING_READS);
-  resp->type = KVS_GET_TS_SUCCESS;
-  (*r_push_ptr_) =  r_push_ptr;
-}
-
 // Handle a local rmw in the KVS
 static inline void KVS_from_trace_rmw(trace_op_t *op,
                                       mica_op_t *kv_ptr,
@@ -224,38 +96,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
   op->ts.version = new_version;
 }
 
-// Handle a local rmw acquire in the KVS
-static inline void KVS_from_trace_acquires_ooe_reads(trace_op_t *op, mica_op_t *kv_ptr,
-                                                     kv_resp_t *resp, p_ops_t *p_ops,
-                                                     uint32_t *r_push_ptr_, uint16_t t_id)
-{
-  if(ENABLE_ASSERTIONS)
-    if (op->opcode != OP_ACQUIRE) assert(!TURN_OFF_KITE);
-  uint32_t r_push_ptr = *r_push_ptr_;
-  r_info_t *r_info = &p_ops->read_info[r_push_ptr];
 
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    check_keys_with_one_trace_op(&op->key, kv_ptr);
-    r_info->log_no = kv_ptr->last_committed_log_no;
-    r_info->rmw_id = kv_ptr->last_committed_rmw_id;
-    r_info->ts_to_read.version = kv_ptr->ts.version;
-    r_info->ts_to_read.m_id = kv_ptr->ts.m_id;
-    memcpy(op->value_to_read, kv_ptr->value, op->real_val_len);
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-
-  // Copy the value to the read_info too
-  memcpy(r_info->value, op->value_to_read, op->real_val_len);
-  r_info->value_to_read = op->value_to_read;
-  r_info->val_len = op->real_val_len;
-  r_info->key = op->key;
-  r_info->is_read = true;
-  r_info->opcode = op->opcode; // it could be an acquire or an out-of-epoch read
-  r_info->r_ptr = r_push_ptr;
-  MOD_INCR(r_push_ptr, PENDING_READS);
-  resp->type = KVS_GET_SUCCESS;
-  (*r_push_ptr_) =  r_push_ptr;
-}
 
 
 /*-----------------------------UPDATES---------------------------------------------*/
@@ -568,9 +409,10 @@ static inline void KVS_acquire_commits(r_info_t *r_info, mica_op_t *kv_ptr,
 
 /* The worker sends its local requests to this, reads check the ts_tuple and copy it to the op to get broadcast
  * Writes do not get served either, writes are only propagated here to see whether their keys exist */
-static inline void KVS_batch_op_trace(uint16_t op_num, uint16_t t_id, trace_op_t *op,
-                                      kv_resp_t *resp,
-                                      p_ops_t *p_ops)
+static inline void KVS_batch_op_trace(uint16_t op_num,
+                                      trace_op_t *op,
+                                      p_ops_t *p_ops,
+                                      uint16_t t_id)
 {
   uint16_t op_i;
   if (ENABLE_ASSERTIONS) assert (op_num <= MAX_OP_BATCH);
@@ -578,49 +420,13 @@ static inline void KVS_batch_op_trace(uint16_t op_num, uint16_t t_id, trace_op_t
   struct mica_bkt *bkt_ptr[MAX_OP_BATCH];
   unsigned int tag[MAX_OP_BATCH];
   mica_op_t *kv_ptr[MAX_OP_BATCH];	/* Ptr to KV item in log */
-  /*
-   * We first lookup the key in the datastore. The first two @I loops work
-   * for both GETs and PUTs.
-   */
   for(op_i = 0; op_i < op_num; op_i++) {
     KVS_locate_one_bucket(op_i, bkt, &op[op_i].key, bkt_ptr, tag, kv_ptr, KVS);
   }
   KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
-
-  //uint64_t rmw_l_id = p_ops->prop_info->l_id;
-  uint32_t r_push_ptr = p_ops->r_push_ptr;
   for(op_i = 0; op_i < op_num; op_i++) {
-    if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) assert(false);
-    /* We had a tag match earlier. Now compare log entry. */
-    bool key_found = memcmp(&kv_ptr[op_i]->key, &op[op_i].key, KEY_SIZE) == 0;
-    if(unlikely(ENABLE_ASSERTIONS && !key_found)) {
-      my_printf(red, "Kvs miss %u\n", op_i);
-      cust_print_key("Op", &op[op_i].key);
-      cust_print_key("KV_ptr", &kv_ptr[op_i]->key);
-      resp[op_i].type = KVS_MISS;
-      return;
-    }
-    // Hit
-    //my_printf(red, "Hit %u : bkt %u/%u, server %u/%u, tag %u/%u \n",
-    //           op_i, op[op_i].key.bkt, kv_ptr[op_i]->key.bkt ,op[op_i].key.server,
-    //           kv_ptr[op_i]->key.server, op[op_i].key.tag, kv_ptr[op_i]->key.tag);
+    od_KVS_check_key(kv_ptr[op_i], op[op_i].key, op_i);
     switch (op[op_i].opcode) {
-      case KVS_OP_GET:
-        if (KVS_from_trace_reads(&op[op_i], kv_ptr[op_i], &resp[op_i],
-                                 p_ops, t_id))
-          break;
-      case OP_ACQUIRE:
-        KVS_from_trace_acquires_ooe_reads(&op[op_i], kv_ptr[op_i], &resp[op_i],
-                                          p_ops, &r_push_ptr, t_id);
-        break;
-      case KVS_OP_PUT:
-        KVS_from_trace_writes(&op[op_i], kv_ptr[op_i], &resp[op_i],
-                              p_ops, &r_push_ptr, t_id);
-        break;
-      case OP_RELEASE:
-        KVS_from_trace_releases(&op[op_i], kv_ptr[op_i], &resp[op_i],
-                                p_ops, &r_push_ptr, t_id);
-        break;
       case FETCH_AND_ADD:
       case COMPARE_AND_SWAP_WEAK:
       case COMPARE_AND_SWAP_STRONG:
@@ -631,7 +437,7 @@ static inline void KVS_batch_op_trace(uint16_t op_num, uint16_t t_id, trace_op_t
       default: if (ENABLE_ASSERTIONS) {
           my_printf(red, "Wrkr %u: KVS_batch_op_trace wrong opcode in KVS: %d, req %d \n",
                     t_id, op[op_i].opcode, op_i);
-          assert(0);
+          assert(false);
         }
     }
   }
@@ -773,72 +579,7 @@ static inline void KVS_batch_op_reads(uint32_t op_num, uint16_t t_id, p_ops_t *p
   }
 }
 
-// The  worker sends (out-of-epoch) reads that received a higher timestamp and thus have to be applied as writes
-// Could also be that the first round of an out-of-epoch write received a high TS
-// All out of epoch reads/writes must come in to update the epoch
-static inline void KVS_batch_op_first_read_round(uint16_t op_num, uint16_t t_id, r_info_t **writes,
-                                                 p_ops_t *p_ops,
-                                                 uint32_t pull_ptr, uint32_t max_op_size)
-{
-  uint16_t op_i;
-  if (ENABLE_ASSERTIONS) assert(op_num <= MAX_INCOMING_R);
-  unsigned int bkt[MAX_INCOMING_R];
-  struct mica_bkt *bkt_ptr[MAX_INCOMING_R];
-  unsigned int tag[MAX_INCOMING_R];
-  mica_op_t *kv_ptr[MAX_INCOMING_R];	/* Ptr to KV item in log */
-  /*
-     * We first lookup the key in the datastore. The first two @I loops work
-     * for both GETs and PUTs.
-     */
-  for(op_i = 0; op_i < op_num; op_i++) {
-    struct key *op_key = &writes[(pull_ptr + op_i) % max_op_size]->key;
-    KVS_locate_one_bucket(op_i, bkt, op_key, bkt_ptr, tag, kv_ptr, KVS);
-  }
-  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
-
-  // the following variables used to validate atomicity between a lock-free r_rep of an object
-  for(op_i = 0; op_i < op_num; op_i++) {
-    r_info_t *r_info = writes[(pull_ptr + op_i) % max_op_size];
-    if(ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {assert(false);}
-    /* We had a tag match earlier. Now compare log entry. */
-    bool key_found = memcmp(&kv_ptr[op_i]->key, &r_info->key, KEY_SIZE) == 0;
-    if(likely(key_found)) { //Cache Hit
-      // The write must be performed with the max TS out of the one stored in the KV and read_info
-      if (r_info->opcode == KVS_OP_PUT) {
-        KVS_out_of_epoch_writes(r_info, kv_ptr[op_i], p_ops, t_id);
-      }
-      else if (r_info->opcode == UPDATE_EPOCH_OP_GET) {
-        if (!MEASURE_SLOW_PATH && r_info->epoch_id > kv_ptr[op_i]->epoch_id) {
-          lock_seqlock(&kv_ptr[op_i]->seqlock);
-          kv_ptr[op_i]->epoch_id = r_info->epoch_id;
-          unlock_seqlock(&kv_ptr[op_i]->seqlock);
-          if (ENABLE_STAT_COUNTING) t_stats[t_id].rectified_keys++;
-        }
-      }
-      else if (r_info->opcode == OP_ACQUIRE || KVS_OP_GET) {
-        KVS_acquire_commits(r_info, kv_ptr[op_i], op_i, t_id);
-      }
-      else if (ENABLE_ASSERTIONS) assert(false);
-    }
-    else {  //Cache miss --> We get here if either tag or log key match failed
-      if (ENABLE_ASSERTIONS) assert(false);
-    }
-
-    if (r_info->complete_flag) {
-      if (ENABLE_ASSERTIONS) assert(&p_ops->read_info[r_info->r_ptr] == r_info);
-      if (r_info->opcode == OP_ACQUIRE || r_info->opcode == KVS_OP_GET)
-        memcpy(r_info->value_to_read, r_info->value, r_info->val_len);
-      signal_completion_to_client(p_ops->r_session_id[r_info->r_ptr],
-                                  p_ops->r_index_to_req_array[r_info->r_ptr], t_id);
-      r_info->complete_flag = false;
-    }
-    else if (ENABLE_ASSERTIONS)
-      check_state_with_allowed_flags(3, r_info->opcode, UPDATE_EPOCH_OP_GET,
-                                     OP_ACQUIRE, OP_RELEASE);
-  }
-
-}
 
 
 // Send an isolated write to the kvs-no batching

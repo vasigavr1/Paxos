@@ -17,6 +17,8 @@ FILE* client_log[CLIENTS_PER_MACHINE];
 
 void cp_static_assert_compile_parameters()
 {
+  static_assert(ENABLE_RMWS, "this flag must be set in od_top.h");
+  static_assert(RMW_RATIO == 1000, "turn the RMW ratio in od_top.h to 100%");
   static_assert(RMW_ACK_BASE_TS_STALE > RMW_ACK, "assumption used to check if replies are acks");
   static_assert(PAXOS_TS > ALL_ABOARD_TS, "Paxos TS must be bigger than ALL Aboard TS");
   static_assert(!(COMMIT_LOGS && (PRINT_LOGS || VERIFY_PAXOS)), " ");
@@ -353,7 +355,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
     loc_entry->help_loc_entry->glob_sess_id = loc_entry->glob_sess_id;
     loc_entry->state = INVALID_RMW;
   }
-  p_ops->sess_info = (sess_info_t *) calloc(SESSIONS_PER_THREAD, sizeof(sess_info_t));
+  p_ops->stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
   p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
 
 
@@ -371,9 +373,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   p_ops->overwritten_values = (uint8_t *) calloc(pending_writes, SEND_CONF_VEC_SIZE);
 
 
-  for (i = 0; i < SESSIONS_PER_THREAD; i++) {
-    p_ops->sess_info[i].ready_to_release = true;
-  }
+
   for (i = 0; i < W_FIFO_SIZE; i++) {
     struct w_message *w_mes = (struct w_message *) &p_ops->w_fifo->w_message[i];
     w_mes->m_id = (uint8_t) machine_id;
@@ -401,7 +401,6 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
   p_ops->ops = (trace_op_t *) calloc(MAX_OP_BATCH, sizeof(trace_op_t));
   randomize_op_values(p_ops->ops, ctx->t_id);
-  p_ops->resp = (kv_resp_t *) malloc(MAX_OP_BATCH * sizeof(kv_resp_t));
   if (!ENABLE_CLIENTS)
     p_ops->trace = trace_init(ctx->t_id);
 

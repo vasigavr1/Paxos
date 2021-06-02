@@ -968,35 +968,17 @@ static inline void check_dbg_counter(context_t *ctx,
 static inline bool fill_trace_op(context_t *ctx,
                                  p_ops_t *p_ops, trace_op_t *op,
                                  trace_t *trace,
-                                 uint16_t op_i, int working_session,
-                                 uint16_t *writes_num_, uint16_t *reads_num_,
-                                 latency_info_t *latency_info,
+                                 int working_session,
                                  uint16_t t_id)
 {
   create_inputs_of_op(&op->value_to_write, &op->value_to_read, &op->real_val_len,
                       &op->opcode, &op->index_to_req_array,
                       &op->key, op->value, trace, working_session, t_id);
   if (!ENABLE_CLIENTS) check_trace_req(p_ops, trace, op, working_session, t_id);
-  uint16_t writes_num = *writes_num_, reads_num = *reads_num_;
-  // Create some back pressure from the buffers, since the sessions may never be stalled
-  if (!EMULATE_ABD) {
-    if (op->opcode == (uint8_t) KVS_OP_PUT) writes_num++;
-    //if (opcode == (uint8_t) OP_RELEASE) write_num+= 2;
-    // A write (relaxed or release) may first trigger a read
-    reads_num += op->opcode == (uint8_t) OP_ACQUIRE ? 2 : 1;
-    if (p_ops->virt_w_size + writes_num >= MAX_ALLOWED_W_SIZE ||
-        p_ops->virt_r_size + reads_num >= MAX_ALLOWED_R_SIZE) {
-      check_dbg_counter(ctx, writes_num, reads_num);
-      return true;
-    } else if (ENABLE_ASSERTIONS) p_ops->debug_loop->sizes_dbg_cntr = 0;
-  }
-  bool is_update = (op->opcode == (uint8_t) KVS_OP_PUT ||
-                    op->opcode == (uint8_t) OP_RELEASE);
-  bool is_rmw = opcode_is_rmw(op->opcode);
-  bool is_read = !is_update && !is_rmw;
 
-  if (ENABLE_ASSERTIONS) assert(is_read || is_update || is_rmw);
-  //if (is_update || is_rmw) op->value_to_write = value_to_write;
+
+  bool is_rmw = opcode_is_rmw(op->opcode);
+  if (ENABLE_ASSERTIONS) assert(is_rmw);
   if (ENABLE_ASSERTIONS && !ENABLE_CLIENTS && op->opcode == FETCH_AND_ADD) {
     assert(is_rmw);
     assert(op->value_to_write == op->value);
@@ -1005,19 +987,9 @@ static inline bool fill_trace_op(context_t *ctx,
   if (is_rmw && ENABLE_ALL_ABOARD) {
     op->attempt_all_aboard = ctx->q_info->missing_num == 0;
   }
-
-  if (op->opcode == KVS_OP_PUT) {
-    add_request_to_sess_info(&p_ops->sess_info[working_session], t_id);
-  }
   increment_per_req_counters(op->opcode, t_id);
-
-
-  op->val_len = is_update ? (uint8_t) (VALUE_SIZE >> SHIFT_BITS) : (uint8_t) 0;
-  if (op->opcode == OP_RELEASE ||
-      op->opcode == OP_ACQUIRE || is_rmw) {
-    if (ENABLE_ASSERTIONS) assert(!p_ops->sess_info[working_session].stalled);
-    p_ops->sess_info[working_session].stalled = true;
-  }
+  if (ENABLE_ASSERTIONS) assert(!p_ops->sess_info[working_session].stalled);
+  p_ops->sess_info[working_session].stalled = true;
   op->session_id = (uint16_t) working_session;
 
   if (ENABLE_ASSERTIONS && DEBUG_SESSIONS)
@@ -1025,14 +997,12 @@ static inline bool fill_trace_op(context_t *ctx,
   //if (w_pull_ptr[[working_session]] == 100000) my_printf(yellow, "Working ses %u \n", working_session);
   //my_printf(yellow, "BEFORE: OP_i %u -> session %u, opcode: %u \n", op_i, working_session, ops[op_i].opcode);
   //my_printf(yellow, "Wrkr %u, session %u, opcode %u \n", t_id, working_session, op->opcode);
-  *writes_num_ = writes_num, *reads_num_ = reads_num;
+
   if (ENABLE_CLIENTS) {
     signal_in_progress_to_client(op->session_id, op->index_to_req_array, t_id);
     if (ENABLE_ASSERTIONS) assert(interface[t_id].wrkr_pull_ptr[working_session] == op->index_to_req_array);
     MOD_INCR(interface[t_id].wrkr_pull_ptr[working_session], PER_SESSION_REQ_NUM);
   }
-  debug_set_version_of_op_to_one(op, op->opcode, t_id);
-  return false;
 }
 
 
@@ -1284,157 +1254,7 @@ static inline void clear_after_release_quorum(p_ops_t *p_ops,
   p_ops->all_sessions_stalled = false;
 }
 
-/*------------------_READS_------------------------------------------------------------ */
-// When committing reads
-static inline void set_flags_before_committing_a_read(r_info_t *read_info,
-                                                      bool *acq_second_round_to_flip_bit, bool *insert_write_flag,
-                                                      bool *write_local_kvs,
-                                                      bool *signal_completion, bool *signal_completion_after_kvs_write,
-                                                      uint16_t t_id)
-{
 
-  bool acq_needs_second_round = (!read_info->seen_larger_ts && read_info->times_seen_ts < REMOTE_QUORUM) ||
-                                (read_info->seen_larger_ts && read_info->times_seen_ts <= REMOTE_QUORUM);
-
-
-  (*insert_write_flag) = (read_info->opcode != KVS_OP_GET) &&
-                         (read_info->opcode == OP_RELEASE ||
-                          read_info->opcode == KVS_OP_PUT || acq_needs_second_round);
-
-
-  (*write_local_kvs) = (read_info->opcode != OP_RELEASE) &&
-                       (read_info->seen_larger_ts ||
-                        (read_info->opcode == KVS_OP_GET) || // a simple read is quorum only if the kvs epoch is behind..
-                        (read_info->opcode == KVS_OP_PUT));  // out-of-epoch write
-
-  (*acq_second_round_to_flip_bit) = read_info->fp_detected;
-
-
-  (*signal_completion) = (read_info->opcode == OP_ACQUIRE) && !(*insert_write_flag) &&
-                         !(*write_local_kvs);
-
-  //all requests that will not be early signaled except: releases and acquires that actually have a second round
-  //That leaves: out-of-epoch writes/reads & acquires that want to write the KVS
-  (*signal_completion_after_kvs_write) = !(*signal_completion) &&
-                                         !((read_info->opcode == OP_ACQUIRE && acq_needs_second_round) ||
-                                           (read_info->opcode == OP_RELEASE) || (read_info->opcode == OP_ACQUIRE_FLIP_BIT) );
-
-}
-
-
-static inline bool
-is_there_buffer_space_to_commmit_the_read (p_ops_t *p_ops,
-                                           bool insert_write_flag,
-                                           bool write_local_kvs,
-                                           uint16_t writes_for_cache)
-{
-  return ((insert_write_flag) && ((p_ops->virt_w_size + 1) >= MAX_ALLOWED_W_SIZE)) ||
-         (write_local_kvs && (writes_for_cache >= MAX_INCOMING_R));
-}
-
-static inline void read_commit_bookkeeping_to_write_local_kvs(p_ops_t *p_ops,
-                                                              r_info_t *read_info,
-                                                              uint32_t pull_ptr,
-                                                              uint16_t *writes_for_cache)
-{
-  check_state_with_allowed_flags(4, read_info->opcode, OP_ACQUIRE, KVS_OP_GET, KVS_OP_PUT);
-  // if a read did not see a larger base_ts it should only change the epoch
-  if (read_info->opcode == KVS_OP_GET && !read_info->seen_larger_ts) {
-    read_info->opcode = UPDATE_EPOCH_OP_GET;
-  }
-  if (read_info->seen_larger_ts) {
-    if (ENABLE_CLIENTS) {
-      if (ENABLE_ASSERTIONS) assert(read_info->value_to_read != NULL);
-      memcpy(read_info->value_to_read, read_info->value, read_info->val_len);
-    }
-  }
-  p_ops->ptrs_to_mes_ops[*writes_for_cache] = (void *) &p_ops->read_info[pull_ptr];
-  (*writes_for_cache)++;
-}
-
-static inline void read_commit_bookkeeping_to_insert_write(p_ops_t *p_ops,
-                                                           r_info_t *read_info,
-                                                           uint32_t pull_ptr,
-                                                           uint16_t t_id)
-{
-  if (read_info->opcode == OP_RELEASE || read_info->opcode == KVS_OP_PUT) {
-    read_info->ts_to_read.m_id = (uint8_t) machine_id;
-    read_info->ts_to_read.version++;
-    if (read_info->opcode == OP_RELEASE)
-      memcpy(&p_ops->read_info[pull_ptr], &p_ops->r_session_id[pull_ptr], SESSION_BYTES);
-  }
-  else if (ENABLE_STAT_COUNTING) t_stats[t_id].read_to_write++;
-  if(ENABLE_ASSERTIONS && read_info->is_read) assert(read_info->opcode == OP_ACQUIRE);
-  insert_write(p_ops, NULL, FROM_READ, pull_ptr, t_id);
-}
-
-
-static inline void read_commit_spawn_flip_bit_message(p_ops_t *p_ops,
-                                                      r_info_t *read_info,
-                                                      uint32_t pull_ptr,
-                                                      uint16_t t_id)
-{
-  // epoch_id should be incremented always even it has been incremented since the acquire fired
-  increment_epoch_id(read_info->epoch_id, t_id);
-  if (DEBUG_QUORUM) printf("Worker %u increases the epoch id to %lu \n", t_id, (uint64_t) epoch_id);
-
-  // The read must have the struct key overloaded with the original acquire l_id
-  if (DEBUG_BIT_VECS)
-    my_printf(cyan, "Wrkr, %u Opcode to be sent in the insert read %u, the local id to be sent %u, "
-                "read_info w_pull_ptr %u, read_info w_push_ptr %u read fifo capacity %u, virtual capacity: %u  \n",
-              t_id, read_info->opcode, p_ops->local_r_id, pull_ptr,
-              p_ops->r_push_ptr, p_ops->r_size, p_ops->virt_r_size);
-  /* */
-  p_ops->read_info[p_ops->r_push_ptr].opcode = OP_ACQUIRE_FLIP_BIT;
-  insert_read(p_ops, NULL, FROM_ACQUIRE, t_id);
-  read_info->fp_detected = false;
-}
-
-static inline void read_commit_acquires_free_sess(p_ops_t *p_ops,
-                                                  uint32_t pull_ptr,
-                                                  latency_info_t *latency_info,
-                                                  uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(p_ops->r_session_id[pull_ptr] < SESSIONS_PER_THREAD);
-    assert(p_ops->sess_info[p_ops->r_session_id[pull_ptr]].stalled);
-  }
-  p_ops->sess_info[p_ops->r_session_id[pull_ptr]].stalled = false;
-  p_ops->all_sessions_stalled = false;
-}
-
-
-static inline void
-read_commit_complete_and_empty_read_info(p_ops_t *p_ops,
-                                         r_info_t *read_info,
-                                         bool signal_completion,
-                                         bool signal_completion_after_kvs_write,
-                                         uint32_t pull_ptr,
-                                         uint16_t t_id)
-{
-  if (signal_completion || read_info->opcode == UPDATE_EPOCH_OP_GET) {
-    //printf("Completing opcode %u read_info val %u, copied over val %u \n",
-    //read_info->opcode, read_info->value[0], read_info->value_to_read[0]);
-    signal_completion_to_client(p_ops->r_session_id[pull_ptr],
-                                p_ops->r_index_to_req_array[pull_ptr], t_id);
-  }
-  else if (signal_completion_after_kvs_write) {
-    if (ENABLE_ASSERTIONS) assert(!read_info->complete_flag);
-    read_info->complete_flag = true;
-  }
-  //my_printf(cyan, "%u ptr freed, capacity %u/%u \n", w_pull_ptr, p_ops->r_size, p_ops->virt_r_size);
-  // Clean-up code
-  memset(&p_ops->read_info[pull_ptr], 0, 3); // a release uses these bytes for the session id but it's still fine to clear them
-  p_ops->r_state[pull_ptr] = INVALID;
-  p_ops->r_size--;
-  p_ops->virt_r_size -= read_info->opcode == OP_ACQUIRE ? 2 : 1;
-  read_info->is_read = false;
-  if (ENABLE_ASSERTIONS) {
-    assert(p_ops->virt_r_size < PENDING_READS);
-    if (p_ops->r_size == 0) assert(p_ops->virt_r_size == 0);
-  }
-  p_ops->local_r_id++;
-}
 
 
 /*----------------------------------------------------

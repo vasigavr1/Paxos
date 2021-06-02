@@ -486,50 +486,7 @@ static inline void print_all_stalled_sessions(p_ops_t *p_ops, uint16_t t_id)
 }
 
 
-// From commit reads
-static inline void checks_when_committing_a_read(p_ops_t *p_ops, uint32_t pull_ptr,
-                                                 bool acq_second_round_to_flip_bit, bool insert_write_flag,
-                                                 bool write_local_kvs, bool signal_completion,
-                                                 bool signal_completion_after_kvs_write,
-                                                 uint16_t t_id)
-{
-  r_info_t *read_info = &p_ops->read_info[pull_ptr];
-  if (ENABLE_ASSERTIONS) {
-    if (acq_second_round_to_flip_bit) assert(p_ops->virt_r_size < MAX_ALLOWED_R_SIZE);
-    check_state_with_allowed_flags(6, read_info->opcode, OP_ACQUIRE, OP_ACQUIRE_FLIP_BIT,
-                                   KVS_OP_GET, OP_RELEASE, KVS_OP_PUT);
-    assert(!(signal_completion && signal_completion_after_kvs_write));
-    if (read_info->is_read) {
-      assert(read_info->opcode == OP_ACQUIRE || read_info->opcode == KVS_OP_GET);
-    }
-    if (read_info->opcode == OP_ACQUIRE_FLIP_BIT) {
-      //printf("%d, %d, %d, %d, %d, %d \n", acq_second_round_to_flip_bit, insert_write_flag, write_local_kvs, insert_commit_flag,
-      //                               signal_completion, signal_completion_after_kvs_write);
-      assert(!acq_second_round_to_flip_bit && !insert_write_flag && !write_local_kvs &&
-             !signal_completion && !signal_completion_after_kvs_write);
-    }
-    if (read_info->opcode == KVS_OP_GET) {
-      assert(epoch_id > 0);
-      assert(!acq_second_round_to_flip_bit && !insert_write_flag &&
-             !signal_completion && signal_completion_after_kvs_write && write_local_kvs);
-    }
-    if (read_info->opcode == OP_RELEASE)
-      assert(!acq_second_round_to_flip_bit && insert_write_flag && !write_local_kvs &&
-             !signal_completion && !signal_completion_after_kvs_write);
-    if (read_info->opcode == KVS_OP_PUT)
-      assert(!acq_second_round_to_flip_bit && insert_write_flag && write_local_kvs &&
-             !signal_completion && signal_completion_after_kvs_write);
-    if (read_info->opcode == OP_ACQUIRE) {
-      if (insert_write_flag) assert(!signal_completion && !signal_completion_after_kvs_write);
-      else if (write_local_kvs) assert(signal_completion_after_kvs_write);
-      else assert(signal_completion);
-    }
-  }
-  if (DEBUG_READS || DEBUG_TS)
-    my_printf(green, "Committing read at index %u, it has seen %u times the same timestamp\n",
-              pull_ptr, read_info->times_seen_ts);
 
-}
 
 //
 static inline void check_read_fifo_metadata(p_ops_t *p_ops, struct r_message *r_mes,
@@ -1149,18 +1106,6 @@ static inline void check_the_proposed_log_no(mica_op_t *kv_ptr, loc_entry_t *loc
 }
 
 
-
-static inline void debug_set_version_of_op_to_one(trace_op_t *op, uint8_t opcode,
-                                                  uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    bool is_update = (opcode == (uint8_t) KVS_OP_PUT ||
-                      opcode == (uint8_t) OP_RELEASE);
-    assert(WRITE_RATIO > 0 || is_update == 0);
-    if (is_update) assert(op->val_len > 0);
-    op->ts.version = 1;
-  }
-}
 
 
 

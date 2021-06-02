@@ -31,7 +31,6 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 
   p_ops_t* p_ops = (p_ops_t*) ctx->appl_ctx;
   trace_op_t *ops = p_ops->ops;
-  kv_resp_t *resp = p_ops->resp;
   trace_t *trace = p_ops->trace;
 
   uint16_t writes_num = 0, reads_num = 0, op_i = 0;
@@ -44,7 +43,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   }
   for (uint16_t i = 0; i < SESSIONS_PER_THREAD; i++) {
     uint16_t sess_i = (uint16_t)((p_ops->last_session + i) % SESSIONS_PER_THREAD);
-    if (od_pull_request_from_this_session(p_ops->sess_info[sess_i].stalled, sess_i, ctx->t_id)) {
+    if (od_pull_request_from_this_session(p_ops->stalled[sess_i], sess_i, ctx->t_id)) {
       working_session = sess_i;
       break;
     }
@@ -58,71 +57,28 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 
   bool passed_over_all_sessions = false;
   while (op_i < MAX_OP_BATCH && !passed_over_all_sessions) {
-    if (fill_trace_op(ctx, p_ops, &ops[op_i], &trace[p_ops->trace_iter],
-                      op_i, working_session, &writes_num,
-                      &reads_num, NULL, ctx->t_id))
-      break;
+    fill_trace_op(ctx, p_ops, &ops[op_i], &trace[p_ops->trace_iter],
+                  working_session, ctx->t_id);
+
     // Find out next session to work on
-    while (!od_pull_request_from_this_session(p_ops->sess_info[working_session].stalled,
-                                              (uint16_t) working_session, ctx->t_id)) {
-      debug_sessions(p_ops, (uint32_t) working_session, ctx->t_id);
-      MOD_INCR(working_session, SESSIONS_PER_THREAD);
-      if (working_session == p_ops->last_session) {
-        passed_over_all_sessions = true;
-        // If clients are used the condition does not guarantee that sessions are stalled
-        if (!ENABLE_CLIENTS) p_ops->all_sessions_stalled = true;
-        break;
-      }
-    }
-    resp[op_i].type = EMPTY;
-    op_i++;
+    passed_over_all_sessions =
+        od_find_next_working_session(ctx, &working_session,
+                                     p_ops->stalled,
+                                     p_ops->last_session,
+                                     &p_ops->all_sessions_stalled);
     if (!ENABLE_CLIENTS) {
       p_ops->trace_iter++;
       if (trace[p_ops->trace_iter].opcode == NOP) p_ops->trace_iter = 0;
     }
+    op_i++;
   }
-
 
   p_ops->last_session = (uint16_t) working_session;
-
   t_stats[ctx->t_id].cache_hits_per_thread += op_i;
-  KVS_batch_op_trace(op_i, ctx->t_id, ops, resp, p_ops);
-  //my_printf(cyan, "thread %d  adds %d/%d ops\n", t_id, op_i, MAX_OP_BATCH);
+  KVS_batch_op_trace(op_i, ops, p_ops, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
-    // my_printf(green, "After: OP_i %u -> session %u \n", i, *(uint32_t *) &ops[i]);
-    if (resp[i].type == KVS_MISS)  {
-      my_printf(green, "KVS miss %u: bkt %u, server %u, tag %u \n", i,
-                   ops[i].key.bkt, ops[i].key.server, ops[i].key.tag);
-      assert(false);
-      clean_up_on_KVS_miss(&ops[i], p_ops, NULL, ctx->t_id);
-      continue;
-    }
-    // check_version_after_batching_trace_to_cache(&ops[i], &resp[i], t_id);
-    // Local reads
-    if (resp[i].type == KVS_LOCAL_GET_SUCCESS) {
-      //check_state_with_allowed_flags(2, interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state, IN_PROGRESS_REQ);
-      //assert(interface[t_id].req_array[ops[i].session_id][ops[i].index_to_req_array].state == IN_PROGRESS_REQ);
-      signal_completion_to_client(ops[i].session_id, ops[i].index_to_req_array, ctx->t_id);
-    }
-    // Writes
-    else if (resp[i].type == KVS_PUT_SUCCESS) {
-      insert_write(p_ops, &ops[i], FROM_TRACE, 0, ctx->t_id);
-      signal_completion_to_client(ops[i].session_id, ops[i].index_to_req_array, ctx->t_id);
-    }
-    // RMWS
-    else if (ENABLE_RMWS && opcode_is_rmw(ops[i].opcode)) {
-       insert_rmw(p_ops, &ops[i], ctx->t_id);
-    }
-    // KVS_GET_SUCCESS: Acquires, out-of-epoch reads, KVS_GET_TS_SUCCESS: Releases, out-of-epoch Writes
-    else {
-      check_state_with_allowed_flags(3, resp[i].type, KVS_GET_SUCCESS, KVS_GET_TS_SUCCESS);
-      insert_read(p_ops, &ops[i], FROM_TRACE, ctx->t_id);
-      if (ENABLE_ASSERTIONS && ops[i].opcode == KVS_OP_PUT) {
-        p_ops->sess_info[ops[i].session_id].writes_not_yet_inserted++;
-      }
-    }
+    insert_rmw(p_ops, &ops[i], ctx->t_id);
   }
-  return;
 }
 
 /* ---------------------------------------------------------------------------
@@ -138,7 +94,7 @@ static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
     if (state == INVALID_RMW) continue;
     if (ENABLE_ASSERTIONS) {
       assert(loc_entry->sess_id == sess_i);
-      assert(p_ops->sess_info[sess_i].stalled);
+      assert(p_ops->stalled[sess_i]);
     }
 
     /* =============== ACCEPTED ======================== */
@@ -157,9 +113,9 @@ static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
 
     /* =============== PROPOSED ======================== */
     if (state == PROPOSED) {
-      if (cannot_accept_if_unsatisfied_release(loc_entry, &p_ops->sess_info[sess_i])) {
-        continue;
-      }
+      //if (cannot_accept_if_unsatisfied_release(loc_entry, &p_ops->sess_info[sess_i])) {
+      //  continue;
+      //}
 
       if (loc_entry->rmw_reps.ready_to_inspect) {
         loc_entry->stalled_reason = NO_REASON;
@@ -792,148 +748,6 @@ static inline void poll_for_read_replies(context_t *ctx)
 //---------------------------------------------------------------------------*/
 
 
-// Handle acked reads: trigger second round if needed, update the KVS if needed
-// Handle the first round of Lin Writes
-// Increment the epoch_id after an acquire that learnt the node has missed messages
-static inline void commit_reads(p_ops_t *p_ops,
-                                uint16_t t_id)
-{
-  uint32_t pull_ptr = p_ops->r_pull_ptr;
-  uint16_t writes_for_cache = 0;
-  // Acquire needs to have a second READ round irrespective of the
-  // timestamps if it is charged with flipping a bit
-  bool acq_second_round_to_flip_bit;
-  // A relaxed read need not do a second round ever, it does not need to quoromize a value before reading it
-  // An acquire must have a second round trip if the timestamp has not been seen by a quorum
-  // i.e. if it has been seen locally but not from a REMOTE_QUORUM
-  // or has not been seen locally and has not been seen by a full QUORUM
-  // or if it is the first round of a release or an out-of-epoch write
-  bool insert_write_flag;
-
-  // write_local_kvs : Write the local KVS if the base_ts has not been seen locally
-  // or if it is an out-of-epoch write (but NOT a Release!!)
-  bool write_local_kvs;
-
-  // Signal completion before going to the KVS on an Acquire that needs not go to the KVS
-  bool signal_completion;
-  // Signal completion after going to the KVS on an Acquire that needs to go to the KVS but does not need to be sent out (!!),
-  // on any out-of epoch write, and an out-of-epoch read that needs to go to the KVS
-  bool signal_completion_after_kvs_write;
-
-
-  /* Because it's possible for a read to insert another read i.e OP_ACQUIRE->OP_ACQUIRE_FLIP_BIT
-   * we need to make sure that even if all requests do that, the fifo will have enough space to:
-   * 1) not deadlock and 2) not overwrite a read_info that will later get taken to the kvs
-   * That means that the fifo must have free slots equal to SESSION_PER_THREADS because
-   * this many acquires can possibly exist in the fifo*/
-  if (ENABLE_ASSERTIONS) assert(p_ops->virt_r_size < PENDING_READS);
-  while(p_ops->r_state[pull_ptr] == READY) {
-    r_info_t *read_info = &p_ops->read_info[pull_ptr];
-    //set the flags for each read
-    set_flags_before_committing_a_read(read_info, &acq_second_round_to_flip_bit, &insert_write_flag,
-                                       &write_local_kvs,
-                                       &signal_completion, &signal_completion_after_kvs_write, t_id);
-    checks_when_committing_a_read(p_ops, pull_ptr, acq_second_round_to_flip_bit, insert_write_flag,
-                                  write_local_kvs, signal_completion, signal_completion_after_kvs_write, t_id);
-
-    // Break condition: this read cannot be processed, and thus no subsequent read will be processed
-    if (is_there_buffer_space_to_commmit_the_read(p_ops, insert_write_flag,
-                                                  write_local_kvs, writes_for_cache))
-      break;
-
-    //CACHE: Reads that need to go to kvs
-    if (write_local_kvs)
-      read_commit_bookkeeping_to_write_local_kvs(p_ops, read_info,
-                                                 pull_ptr, &writes_for_cache);
-
-    //INSERT WRITE: Reads that need to be converted to writes: second round of read/acquire or
-    // Writes whose first round is a read: out-of-epoch writes/releases
-    if (insert_write_flag)
-      read_commit_bookkeeping_to_insert_write(p_ops, read_info,
-                                              pull_ptr, t_id);
-
-    // FAULT_TOLERANCE: In the off chance that the acquire needs a second round for fault tolerance
-    if (unlikely(acq_second_round_to_flip_bit))
-      read_commit_spawn_flip_bit_message(p_ops, read_info,
-                                         pull_ptr, t_id);
-
-    // SESSION: Acquires that wont have a second round and thus must free the session
-    if (!insert_write_flag && (read_info->opcode == OP_ACQUIRE))
-      read_commit_acquires_free_sess(p_ops, pull_ptr, NULL, t_id);
-
-    // COMPLETION: Signal completion for reads/acquires that need not write the local KVS or
-    // have a second write round (applicable only for acquires)
-    read_commit_complete_and_empty_read_info(p_ops, read_info, signal_completion,
-                                             signal_completion_after_kvs_write,
-                                             pull_ptr, t_id);
-    MOD_INCR(pull_ptr, PENDING_READS);
-  }
-  p_ops->r_pull_ptr = pull_ptr;
-  if (writes_for_cache > 0)
-    KVS_batch_op_first_read_round(writes_for_cache, t_id, (r_info_t **) p_ops->ptrs_to_mes_ops,
-                                  p_ops, 0, (uint32_t) MAX_INCOMING_R);
-}
-
-
-
-// Remove writes that have seen all acks
-static inline void remove_writes(p_ops_t *p_ops,
-                                 uint16_t t_id)
-{
-  while(p_ops->w_meta[p_ops->w_pull_ptr].w_state >= READY_PUT) {
-    p_ops->full_w_q_fifo = 0;
-    uint32_t w_pull_ptr = p_ops->w_pull_ptr;
-    per_write_meta_t *w_meta = &p_ops->w_meta[p_ops->w_pull_ptr];
-    uint8_t w_state = w_meta->w_state;
-    if (ENABLE_ASSERTIONS && EMULATE_ABD)
-      assert(w_state == READY_RELEASE || w_state == READY_ACQUIRE);
-    //if (DEBUG_ACKS)
-    //  my_printf(green, "Wkrk %u freeing write at w_pull_ptr %u, w_size %u, w_state %d, session %u, local_w_id %lu, acks seen %u \n",
-    //               g_id, p_ops->w_pull_ptr, p_ops->w_size, p_ops->w_state[p_ops->w_pull_ptr],
-    //               p_ops->w_session_id[p_ops->w_pull_ptr], p_ops->local_w_id, p_ops->acks_seen[p_ops->w_pull_ptr]);
-    //if (t_id == 1) printf("Wrkr %u Clearing state %u ptr %u \n", t_id, w_state, p_ops->w_pull_ptr);
-    uint32_t sess_id = w_meta->sess_id;
-    if (ENABLE_ASSERTIONS) assert(sess_id < SESSIONS_PER_THREAD);
-    sess_info_t *sess_info = &p_ops->sess_info[sess_id];
-
-    if(w_state == READY_RMW_ACQ_COMMIT || w_state == READY_ACQUIRE) {
-      if (!sess_info->stalled)
-        printf("state %u ptr %u \n", w_state, p_ops->w_pull_ptr);
-      // Releases, and Acquires/RMW-Acquires that needed a "write" round complete here
-      signal_completion_to_client(sess_id, p_ops->w_index_to_req_array[w_pull_ptr], t_id);
-      sess_info->stalled = false;
-      p_ops->all_sessions_stalled = false;
-    }
-
-    // This case is tricky because in order to remove the release we must add another release
-    // but if the queue was full that would deadlock, therefore we must remove the write before inserting
-    // the second round of the release
-    if (unlikely((w_state == READY_BIT_VECTOR || w_state == READY_NO_OP_RELEASE))) {
-      commit_first_round_of_release_and_spawn_the_second (p_ops, t_id);
-    }
-
-    //  Free the write fifo entry
-    if (w_state == READY_RELEASE) {
-      if (ENABLE_ASSERTIONS) assert(p_ops->virt_w_size >= 2);
-      p_ops->virt_w_size -= 2;
-    }
-    else {
-      p_ops->virt_w_size--;
-      //my_printf(yellow, "Decreasing virt_w_size %u at %u, state %u \n",
-       //             p_ops->virt_w_size, w_pull_ptr, w_state);
-    }
-    p_ops->w_size--;
-    w_meta->w_state = INVALID;
-    w_meta->acks_seen = 0;
-    p_ops->local_w_id++;
-    memset(w_meta->seen_expected, 0, REM_MACH_NUM);
-    MOD_INCR(p_ops->w_pull_ptr, PENDING_WRITES);
-  } // while loop
-
-  attempt_to_free_partially_acked_write(p_ops, t_id);
-  // check_after_removing_writes(p_ops, t_id);
-}
-
 
 static inline void cp_checks_at_loop_start(context_t *ctx)
 {
@@ -983,9 +797,15 @@ static void cp_main_loop(context_t *ctx)
 
     cp_checks_at_loop_start(ctx);
 
+    batch_requests_to_KVS(ctx);
+
+    broadcast_reads(ctx);
+
+    broadcast_writes(ctx);
+
     poll_for_writes(ctx, W_QP_ID);
 
-    ctx_send_acks(ctx, ACK_QP_ID);
+    od_send_acks(ctx, ACK_QP_ID);
 
     poll_for_reads(ctx);
 
@@ -993,24 +813,15 @@ static void cp_main_loop(context_t *ctx)
 
     poll_for_read_replies(ctx);
 
-    // Either commit a read or convert it into a write
-    commit_reads(p_ops, ctx->t_id);
-
     inspect_rmws(p_ops, ctx->t_id);
 
     poll_acks(ctx);
 
-    remove_writes(p_ops, ctx->t_id);
-
     // Get a new batch from the trace, pass it through the kvs and create
     // the appropriate write/r_rep messages
-    batch_requests_to_KVS(ctx);
 
-    // Perform the r_rep broadcasts
-    broadcast_reads(ctx);
 
-    // Perform the write broadcasts
-    broadcast_writes(ctx);
+
   }
 }
 

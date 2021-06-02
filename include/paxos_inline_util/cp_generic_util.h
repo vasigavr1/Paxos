@@ -146,8 +146,6 @@ static inline void increment_per_req_counters(uint8_t opcode, uint16_t t_id)
   if (ENABLE_STAT_COUNTING) {
     if (opcode == KVS_OP_PUT) t_stats[t_id].writes_per_thread++;
     else if (opcode == KVS_OP_GET) t_stats[t_id].reads_per_thread++;
-    else if (opcode == OP_ACQUIRE) t_stats[t_id].acquires_per_thread++;
-    else if (opcode == OP_RELEASE) t_stats[t_id].releases_per_thread++;
     else  t_stats[t_id].rmws_completed++;
   }
 }
