@@ -271,6 +271,7 @@ typedef struct pending_ops {
   struct pending_out_of_epoch_writes *p_ooe_writes;
   //sess_info_t *sess_info;
   bool *stalled;
+  uint64_t *inserted_prop_id;
   uint64_t local_w_id;
   uint64_t local_r_id;
   uint32_t *r_session_id;

@@ -287,7 +287,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   uint32_t i, j;
   p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
 
-
+  p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
   //p_ops->w_state = (uint8_t *) malloc(zk_ctx * sizeof(uint8_t *));
   p_ops->r_state = (uint8_t *) malloc(pending_reads * sizeof(uint8_t *));
   //p_ops->w_session_id = (uint32_t *) calloc(zk_ctx, sizeof(uint32_t));

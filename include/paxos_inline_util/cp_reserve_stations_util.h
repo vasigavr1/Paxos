@@ -240,14 +240,9 @@ inline void insert_prop_help(context_t *ctx, void* prop_ptr,
   prop_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
   // If it's the first message give it an lid
   if (slot_meta->coalesce_num == 1) {
-    prop_mes->l_id = hr_ctx->inserted_w_id[ctx->m_id];
-    fifo_set_push_backward_ptr(send_fifo, hr_ctx->loc_w_rob->push_ptr);
+    prop_mes->l_id = p_ops->inserted_prop_id[ctx->m_id];
+    p_ops->inserted_prop_id[ctx->m_id]++;
   }
-  // Bookkeeping
-  w_rob->w_state = VALID;
-  fifo_incr_push_ptr(hr_ctx->loc_w_rob);
-  hr_ctx->inserted_w_id[ctx->m_id]++;
-  hr_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
 }
 
 
