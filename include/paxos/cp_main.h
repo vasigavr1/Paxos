@@ -26,13 +26,8 @@
 // zeroing its coalesce_num, as such we take care to allow
 // one fewer pending write than slots in the w_ifo
 #define MAX_ALLOWED_W_SIZE (PENDING_WRITES - 1)
-#define R_FIFO_SIZE (PENDING_READS + LOCAL_PROP_NUM) // Proposes use the read fifo
+#define PROP_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define MAX_ALLOWED_R_SIZE (PENDING_READS - 1)
-
-
-
-
-
 
 
 typedef  struct r_mes_info {
@@ -77,7 +72,7 @@ struct read_fifo {
   uint32_t push_ptr;
   uint32_t bcast_pull_ptr;
   uint32_t bcast_size; // number of reads not messages!
-  r_mes_info_t info[R_FIFO_SIZE];
+  r_mes_info_t info[PROP_FIFO_SIZE];
 };
 
 //
@@ -107,7 +102,7 @@ typedef struct read_info{
   uint8_t times_seen_ts;
   bool seen_larger_ts; // used also for log numbers for rmw_acquires
 	uint8_t opcode;
-  struct ts_tuple ts_to_read;
+  ts_tuple_t ts_to_read;
   struct key key;
 	// the value read locally, a greater value received or
 	// in case of a 2-round write, the value to be written
@@ -130,10 +125,10 @@ typedef struct read_info{
 } r_info_t ;
 
 struct dbg_glob_entry {
-  struct ts_tuple last_committed_ts;
+  ts_tuple_t last_committed_ts;
   uint32_t last_committed_log_no;
   struct rmw_id last_committed_rmw_id;
-  struct ts_tuple proposed_ts;
+  ts_tuple_t proposed_ts;
   uint32_t proposed_log_no;
   struct rmw_id proposed_rmw_id;
   uint8_t last_committed_flag;
@@ -141,7 +136,7 @@ struct dbg_glob_entry {
 };
 
 struct rmw_help_entry{
-  struct ts_tuple ts;
+  ts_tuple_t ts;
   uint8_t opcode;
   uint8_t value[RMW_VALUE_SIZE];
   struct rmw_id rmw_id;
@@ -174,7 +169,7 @@ typedef struct rmw_rep_info {
 
 // Entry that keep pending thread-local RMWs, the entries are accessed with session id
 typedef struct rmw_local_entry {
-  struct ts_tuple new_ts;
+  ts_tuple_t new_ts;
   struct key key;
   uint8_t opcode;
   uint8_t state;
@@ -188,7 +183,7 @@ typedef struct rmw_local_entry {
   bool base_ts_found;
   uint8_t value_to_write[VALUE_SIZE];
   uint8_t value_to_read[VALUE_SIZE];
-  struct ts_tuple base_ts;
+  ts_tuple_t base_ts;
   uint8_t *compare_val; //for CAS- add value for FAA
   uint32_t rmw_val_len;
   struct rmw_id rmw_id; // this is implicitly the l_id
@@ -264,7 +259,6 @@ typedef struct pending_ops {
   uint16_t last_session;
 
   trace_op_t *ops;
-  kv_resp_t *resp;
 
   write_t **ptrs_to_local_w; // used for the first phase of release
   uint8_t *overwritten_values;
@@ -329,7 +323,7 @@ typedef struct commit_info {
   bool no_value;
   uint8_t flag;
   uint32_t log_no;
-  struct ts_tuple base_ts;
+  ts_tuple_t base_ts;
   rmw_id_t rmw_id;
   uint8_t *value;
   const char* message;
@@ -406,7 +400,7 @@ typedef struct thread_stats {
 typedef struct trace_op {
   uint16_t session_id;
   bool attempt_all_aboard;
-  struct ts_tuple ts;
+  ts_tuple_t ts;
   struct key key;
   uint8_t opcode;
   uint8_t val_len; // this represents the maximum value len

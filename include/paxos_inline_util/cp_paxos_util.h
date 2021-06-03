@@ -533,7 +533,7 @@ static inline void commit_rmw(mica_op_t *kv_ptr,
   r_info_t* r_info;
   commit_info_t com_info;
   //mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  struct ts_tuple base_ts = {0, 0};
+  ts_tuple_t base_ts = {0, 0};
   switch (flag) {
     case FROM_LOG_TOO_LOW_REP:
       rep = (struct rmw_rep_last_committed *) rmw;
@@ -793,7 +793,7 @@ static inline void handle_rmw_rep_replies(p_ops_t *p_ops, struct r_rep_message *
                                  PROP_REPLY, ACCEPT_REPLY_NO_CREDITS);
   uint8_t rep_num = rep_mes->coalesce_num;
   //my_printf(yellow, "Received opcode %u, prop_rep num %u \n", r_rep_mes->opcode, rep_num);
-  uint16_t byte_ptr = R_REP_MES_HEADER; // same for both accepts and replies
+  uint16_t byte_ptr = PROP_REP_MES_HEADER; // same for both accepts and replies
   for (uint16_t r_rep_i = 0; r_rep_i < rep_num; r_rep_i++) {
     struct rmw_rep_last_committed *rep = (struct rmw_rep_last_committed *) (((void *) rep_mes) + byte_ptr);
     handle_single_rmw_rep(p_ops, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
@@ -1445,9 +1445,10 @@ static inline void inspect_accepts(p_ops_t *p_ops,
  * --------------------------------------------------------------------------*/
 
 // Insert an RMW in the local RMW structs
-static inline void insert_rmw(p_ops_t *p_ops, trace_op_t *op,
+static inline void insert_rmw(context_t *ctx, trace_op_t *op,
                               uint16_t t_id)
 {
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   uint16_t session_id = op->session_id;
   loc_entry_t *loc_entry = &p_ops->prop_info->entry[session_id];
   if (loc_entry->state == CAS_FAILED) {
@@ -1480,7 +1481,9 @@ static inline void insert_rmw(p_ops_t *p_ops, trace_op_t *op,
     }
     else {
       if (ENABLE_ASSERTIONS) assert(op->ts.version == PAXOS_TS);
-      insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
+      od_insert_mes(ctx, PROP_QP_ID, (uint32_t) PROP_SIZE, PROP_REP_ACCEPTED_SIZE,
+                    false, loc_entry, 0, 0);
+      //insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
     }
   }
   else if (loc_entry->state == NEEDS_KV_PTR) {

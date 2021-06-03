@@ -382,7 +382,7 @@ static inline void write_kv_ptr_acc_val(mica_op_t *kv_ptr, uint8_t *new_val, siz
 
 static inline void write_kv_if_conditional_on_ts(mica_op_t *kv_ptr, uint8_t *new_val,
                                                  size_t val_size,
-                                                 uint8_t flag, struct ts_tuple base_ts)
+                                                 uint8_t flag, ts_tuple_t base_ts)
 {
   lock_seqlock(&kv_ptr->seqlock);
   if (compare_ts(&base_ts, &kv_ptr->ts) == GREATER) {
@@ -397,7 +397,7 @@ static inline void write_kv_if_conditional_on_netw_ts(mica_op_t *kv_ptr, uint8_t
                                                       size_t val_size, uint8_t flag,
                                                       struct network_ts_tuple netw_base_ts)
 {
-  struct ts_tuple base_ts = {netw_base_ts.m_id, netw_base_ts.version};
+  ts_tuple_t base_ts = {netw_base_ts.m_id, netw_base_ts.version};
   write_kv_if_conditional_on_ts(kv_ptr, new_val, val_size, flag, base_ts);
 
 }

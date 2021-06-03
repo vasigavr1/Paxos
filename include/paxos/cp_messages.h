@@ -20,6 +20,32 @@
 #define SEND_CONF_VEC_SIZE 2
 
 
+// PROPOSES
+#define PROP_MES_HEADER (10) // local id + coalesce num + m_id
+#define PROP_SIZE (42 + 2) // l_id 8, RMW_id- 8, ts 5, key 8, log_number 4, opcode 1 + basets 8
+#define PROP_SEND_SIZE (PROP_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
+#define PROP_RECV_SIZE (GRH_SIZE + PROP_SEND_SIZE)
+
+#define MAX_PROP_WRS (MESSAGES_IN_BCAST_BATCH)
+#define MAX_RECV_PROP_WRS ((PROP_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
+#define MAX_INCOMING_PROP (MAX_RECV_PROP_WRS * PROP_COALESCE)
+
+// TODO is l_id needed ?
+#define PROP_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1
+// PROPOSE REPLIES
+#define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
+#define PROP_REP_SMALL_SIZE 9 // lid and opcode
+#define PROP_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
+#define PROP_REP_BASE_TS_STALE_SIZE (9 + TS_TUPLE_SIZE + RMW_VALUE_SIZE)
+#define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //with the base_ts
+#define PROP_REP_MES_SIZE (PROP_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
+// ACCEPT REPLIES
+#define ACC_REP_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
+#define ACC_REP_SMALL_SIZE 9 // lid and opcode
+#define ACC_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
+#define ACC_REP_MES_SIZE (PROP_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
+
+
 // WRITES: Releases, writes, accepts and commits -- all sizes in BYTES
 #define W_MES_HEADER (12) // local id + m_id+ w_num + opcode
 #define EFFECTIVE_MAX_W_SIZE (MAX_WRITE_SIZE - W_MES_HEADER) // all messages have the same header
@@ -63,55 +89,11 @@
 #define MAX_INCOMING_W (MAX_RECV_W_WRS * MAX_WRITE_COALESCE)
 
 
-// READS : Read,Acquires, RMW-Acquires, Proposes
-#define R_MES_HEADER (10) // local id + coalesce num + m_id
-#define EFFECTIVE_MAX_R_SIZE (MAX_READ_SIZE - R_MES_HEADER)
-
-// reads/acquires/rmw-acquire
-#define R_SIZE (KEY_SIZE + TS_TUPLE_SIZE + 1 + 4 + 2)// key+ version + m_id + opcode + log_no
-#define R_COALESCE (EFFECTIVE_MAX_R_SIZE / R_SIZE)
-#define R_MES_SIZE (R_MES_HEADER + (R_SIZE * R_COALESCE))
-// proposes
-#define PROP_SIZE (42 + 2) // l_id 8, RMW_id- 8, ts 5, key 8, log_number 4, opcode 1 + basets 8
-#define PROP_COALESCE (EFFECTIVE_MAX_R_SIZE / PROP_SIZE)
-#define PROP_MES_SIZE (R_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
-
-// Combining reads + proposes
-#define R_SEND_SIZE MAX(R_MES_SIZE, PROP_MES_SIZE)
-#define MAX_READ_COALESCE MAX(R_COALESCE, PROP_COALESCE)
-
-#define R_SEND_SIDE_PADDING 0 //FIND_PADDING(R_SEND_SIZE)
-#define ALIGNED_R_SEND_SIDE (R_SEND_SIZE + R_SEND_SIDE_PADDING)
-
-#define MAX_RECV_R_WRS ((R_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
-#define MAX_INCOMING_R (MAX_RECV_R_WRS * MAX_READ_COALESCE)
-#define MAX_R_WRS (MESSAGES_IN_BCAST_BATCH)
-#define R_ENABLE_INLINING ((R_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
-#define R_RECV_SIZE (GRH_SIZE + ALIGNED_R_SEND_SIDE)
 
 
-// READ REPLIES -- Replies to reads/acquires/proposes accepts
-#define R_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1 // and credits
-// Read-TS (first round of releases and ooe-writes)
-#define R_REP_ONLY_TS_SIZE (TS_TUPLE_SIZE + 1)
-#define R_REP_SMALL_SIZE (1)
-#define READ_TS_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * R_REP_ONLY_TS_SIZE)) // Message size of replies to readTS
-// ACQUIRES (& ooe reads)
-#define ACQ_REP_SIZE (TS_TUPLE_SIZE + RMW_VALUE_SIZE + 8 + LOG_NO_SIZE + 1)
-#define ACQ_REP_MES_SIZE (R_REP_MES_HEADER + (R_COALESCE * ACQ_REP_SIZE)) //Message size of replies to acquires & ooe-reads
-// PROPOSE REPLIES
-#define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
-#define PROP_REP_SMALL_SIZE 9 // lid and opcode
-#define PROP_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
-#define PROP_REP_BASE_TS_STALE_SIZE (9 + TS_TUPLE_SIZE + RMW_VALUE_SIZE)
-#define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //with the base_ts
-#define PROP_REP_MES_SIZE (R_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
-// ACCEPT REPLIES
-#define ACC_REP_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
-#define ACC_REP_SMALL_SIZE 9 // lid and opcode
-#define ACC_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
-//#define ACC_REP_ACCEPTED_SIZE (ACC_REP_ONLY_TS_SIZE + RMW_ID_SIZE + RMW_VALUE_SIZE)
-#define ACC_REP_MES_SIZE (R_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
+
+
+
 
 
 // COMBINE Reads, Acquires, RMW-acquires, Accepts , Propose
@@ -126,12 +108,12 @@
 #define R_REP_RECV_SIZE (GRH_SIZE + ALIGNED_R_REP_SEND_SIDE)
 
 #define R_REP_SLOTS_FOR_ACCEPTS (W_CREDITS * REM_MACH_NUM * SESSIONS_PER_THREAD) // the maximum number of accept-related read replies
-#define MAX_RECV_R_REP_WRS ((REM_MACH_NUM * R_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
-#define R_REP_WRS_WITHOUT_ACCEPTS (R_CREDITS * REM_MACH_NUM)
+#define MAX_RECV_R_REP_WRS ((REM_MACH_NUM * PROP_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
+#define R_REP_WRS_WITHOUT_ACCEPTS (PROP_CREDITS * REM_MACH_NUM)
 #define MAX_R_REP_WRS (R_REP_WRS_WITHOUT_ACCEPTS + R_REP_SLOTS_FOR_ACCEPTS)
 
 #define R_REP_ENABLE_INLINING ((R_REP_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
-#define R_REP_FIFO_SIZE (MAX_INCOMING_R + R_REP_SLOTS_FOR_ACCEPTS)
+#define R_REP_FIFO_SIZE (MAX_INCOMING_PROP + R_REP_SLOTS_FOR_ACCEPTS)
 
 // Acks
 #define MAX_RECV_ACK_WRS (REM_MACH_NUM * W_CREDITS)
@@ -159,7 +141,7 @@ struct accept {
   uint64_t t_rmw_id ; // the upper bits are overloaded to indicate that the accept is trying to flip a bit
   uint64_t l_id;
   uint32_t log_no;
-  struct ts_tuple base_ts;
+  ts_tuple_t base_ts;
   //uint8_t unused_[3];
   uint8_t value[RMW_VALUE_SIZE];
 
@@ -201,7 +183,7 @@ struct read {
 } __attribute__((__packed__));
 
 //
-struct propose {
+typedef struct propose {
   struct network_ts_tuple ts;
   uint8_t opcode;
   uint8_t unused[2];
@@ -210,12 +192,19 @@ struct propose {
   uint64_t t_rmw_id;
   uint32_t log_no;
   uint64_t l_id; // the l_id of the rmw local_entry
-  struct ts_tuple base_ts;
-} __attribute__((__packed__));
+  ts_tuple_t base_ts;
+} __attribute__((__packed__)) cp_prop_t;
 
 
 
 /*------- HEADERS---------------------- */
+
+typedef struct cp_prop_mes {
+  uint64_t l_id;
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  cp_prop_t prop[PROP_COALESCE];
+}__attribute__((__packed__)) cp_prop_mes_t;
 
 typedef struct w_message {
   uint64_t l_id;
@@ -305,16 +294,16 @@ struct rmw_rep_message {
 
 
 /*------------TEMPLATES----------*/
-struct r_rep_message_template {
-  uint8_t unused[ALIGNED_R_REP_SEND_SIDE];
-};
-
-struct w_message_template {
-  uint8_t unused[ALIGNED_W_SEND_SIDE];
-};
-
-struct r_message_template {
-  uint8_t unused[ALIGNED_R_SEND_SIDE];
-};
+//struct r_rep_message_template {
+//  uint8_t unused[ALIGNED_R_REP_SEND_SIDE];
+//};
+//
+//struct w_message_template {
+//  uint8_t unused[ALIGNED_W_SEND_SIDE];
+//};
+//
+//struct r_message_template {
+//  uint8_t unused[ALIGNED_R_SEND_SIDE];
+//};
 
 #endif //CP_MESSAGES_H

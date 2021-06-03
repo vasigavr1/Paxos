@@ -145,7 +145,7 @@ static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_
     my_printf(red, "Worker %d waits for r_reps \n", t_id);
     if (VERBOSE_DBG_COUNTER) {
       //r_rep_mes_ud_t *r_rep_buf =
-      //  (r_rep_mes_ud_t *) (buf + ACK_BUF_SIZE + W_BUF_SIZE + R_BUF_SIZE);
+      //  (r_rep_mes_ud_t *) (buf + ACK_BUF_SIZE + W_BUF_SIZE + PROP_BUF_SIZE);
       //struct r_rep_message *r_rep_mes = (struct r_rep_message *)&r_rep_buf[r_rep_pull_ptr].r_rep_mes;
       //uint64_t l_id = r_rep_mes->l_id;
       //uint8_t message_opc = r_rep_mes->opcode;
@@ -171,10 +171,10 @@ static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_
     wait_dbg_counter[R_REP_QP_ID] = 0;
     //exit(0);
   }
-  if (unlikely(wait_dbg_counter[R_QP_ID] > M_512)) {
+  if (unlikely(wait_dbg_counter[PROP_QP_ID] > M_512)) {
     my_printf(red, "Worker %d waits for reads \n", t_id);
     print_wrkr_stats(t_id);
-    wait_dbg_counter[R_QP_ID] = 0;
+    wait_dbg_counter[PROP_QP_ID] = 0;
   }
   if (unlikely(credit_debug_cnt[W_VC] > M_512)) {
     my_printf(red, "Worker %d lacks write credits \n", t_id);
@@ -495,7 +495,7 @@ static inline void check_read_fifo_metadata(p_ops_t *p_ops, struct r_message *r_
   if (ENABLE_ASSERTIONS) {
     assert(p_ops->virt_r_size <= MAX_ALLOWED_R_SIZE); // this may need to be MAX_ALLOWED_R_SIZE + 1
     assert(p_ops->r_size <= p_ops->virt_r_size);
-    assert(r_mes->coalesce_num <= MAX_READ_COALESCE);
+    assert(r_mes->coalesce_num <= PROP_COALESCE);
     assert(p_ops->r_session_id[p_ops->r_push_ptr] <= SESSIONS_PER_THREAD);
   }
 }
@@ -667,8 +667,8 @@ static inline void check_previous_read_lid(uint8_t source, uint8_t opcode, uint6
 {
   if (ENABLE_ASSERTIONS) {
     if (source == FROM_TRACE) assert(opcode != PROPOSE_OP);
-    if (message_l_id > MAX_READ_COALESCE) {
-      uint32_t prev_r_mes_ptr = (r_mes_ptr + R_FIFO_SIZE - 1) % R_FIFO_SIZE;
+    if (message_l_id > PROP_COALESCE) {
+      uint32_t prev_r_mes_ptr = (r_mes_ptr + PROP_FIFO_SIZE - 1) % PROP_FIFO_SIZE;
       if (r_mes[prev_r_mes_ptr].read[0].opcode != PROPOSE_OP) {
         uint64_t prev_l_id = r_mes[prev_r_mes_ptr].l_id;
         uint8_t prev_coalesce = r_mes[prev_r_mes_ptr].coalesce_num;
@@ -1055,7 +1055,7 @@ static inline void check_when_polling_for_reads(struct r_message *r_mes, uint32_
       assert(r_mes->m_id != machine_id);
 
     }
-    if (polled_reads + r_num > MAX_INCOMING_R) assert(false);
+    if (polled_reads + r_num > MAX_INCOMING_PROP) assert(false);
   }
   if (ENABLE_STAT_COUNTING) {
     if (ENABLE_ASSERTIONS) t_stats[t_id].per_worker_reads_received[r_mes->m_id] += r_num;
@@ -1140,7 +1140,7 @@ static inline void print_check_count_stats_when_sending_r_rep(struct r_rep_fifo 
     struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[pull_ptr];
     check_state_with_allowed_flags(6, r_rep_mes->opcode, ACCEPT_REPLY_NO_CREDITS, ACCEPT_REPLY,
                                    PROP_REPLY, READ_REPLY, READ_PROP_REPLY);
-    uint16_t byte_ptr = R_REP_MES_HEADER;
+    uint16_t byte_ptr = PROP_REP_MES_HEADER;
     struct r_rep_big *r_rep;
     struct rmw_rep_last_committed *rmw_rep;
     assert(r_rep_mes->coalesce_num > 0 && r_rep_mes->coalesce_num <= MAX_R_REP_COALESCE);

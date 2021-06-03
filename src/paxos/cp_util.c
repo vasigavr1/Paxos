@@ -41,21 +41,18 @@ void cp_static_assert_compile_parameters()
                 W_SEND_SIZE >= COM_MES_SIZE &&
                 W_SEND_SIZE <= MAX_WRITE_SIZE, "");
   static_assert(W_SEND_SIZE <= MTU, "");
-  // READS
-  static_assert(R_SEND_SIZE >= R_MES_SIZE &&
-                R_SEND_SIZE >= PROP_MES_SIZE &&
-                R_SEND_SIZE <= MAX_READ_SIZE, "");
-  static_assert(R_SEND_SIZE <= MTU, "");
+
+  static_assert(PROP_SEND_SIZE <= MTU, "");
   // R_REPS
 //  static_assert(R_REP_SEND_SIZE >= PROP_REP_MES_SIZE &&
 //                R_REP_SEND_SIZE >= ACC_REP_MES_SIZE &&
 //                R_REP_SEND_SIZE >= READ_TS_REP_MES_SIZE &&
 //                R_REP_SEND_SIZE >= ACQ_REP_MES_SIZE, "");
-  static_assert(R_REP_SEND_SIZE <= MTU, "");
+  static_assert(PROP_REP_SEND_SIZE <= MTU, "");
 
   // COALESCING
   static_assert(MAX_WRITE_COALESCE < 256, "");
-  static_assert(MAX_READ_COALESCE < 256, "");
+  static_assert(PROP_COALESCE < 256, "");
   static_assert(MAX_REPS_IN_REP < 256, "");
   static_assert(PROP_COALESCE > 0, "");
   static_assert(R_COALESCE > 0, "");
@@ -79,7 +76,7 @@ void cp_static_assert_compile_parameters()
   static_assert(sizeof(r_rep_mes_ud_t) == R_REP_RECV_SIZE, "");
   static_assert(sizeof(ctx_ack_mes_ud_t) == CTX_ACK_RECV_SIZE, "");
   static_assert(sizeof(w_mes_ud_t) == W_RECV_SIZE, "");
-  static_assert(sizeof(r_mes_ud_t) == R_RECV_SIZE, "");
+  static_assert(sizeof(r_mes_ud_t) == PROP_RECV_SIZE, "");
 
   // we want to have more write slots than credits such that we always know that if a machine fails
   // the pressure will appear in the credits and not the write slots
@@ -116,7 +113,7 @@ void cp_static_assert_compile_parameters()
 
 void cp_print_parameters_in_the_start()
 {
-  emphatic_print(green, "KITE");
+  emphatic_print(green, "CLASSIC PAXOS");
   if (ENABLE_ASSERTIONS) {
 
     printf("MICA OP capacity %ld/%d added padding %d  \n",
@@ -126,42 +123,41 @@ void cp_print_parameters_in_the_start()
     printf("Rmw-local_entry %ld \n", sizeof(loc_entry_t));
     printf("quorum-num %d \n", QUORUM_NUM);
 
-    my_printf(green, "READ REPLY: r_rep message %lu/%d, r_rep message ud req %llu/%d,"
-                "read info %llu\n",
-              sizeof(struct r_rep_message), R_REP_SEND_SIZE,
-              sizeof(r_rep_mes_ud_t), R_REP_RECV_SIZE,
-              sizeof(r_info_t));
-    my_printf(green, "W_COALESCE %d, R_COALESCE %d, ACC_COALESCE %u, "
-                "PROPOSE COALESCE %d, COM_COALESCE %d, MAX_WRITE_COALESCE %d,"
-                "MAX_READ_COALESCE %d \n",
-              W_COALESCE, R_COALESCE, ACC_COALESCE, PROP_COALESCE, COM_COALESCE,
-              MAX_WRITE_COALESCE, MAX_READ_COALESCE);
-
-
-    my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
-              sizeof(ctx_ack_mes_t), CTX_ACK_SIZE,
-              sizeof(ctx_ack_mes_ud_t), CTX_ACK_RECV_SIZE);
-    my_printf(yellow, "READ: read %lu/%d, read message %lu/%d, read message ud req %lu/%d\n",
-              sizeof(struct read), R_SIZE,
-              sizeof(struct r_message), R_SEND_SIZE,
-              sizeof(r_mes_ud_t), R_RECV_SIZE);
-    my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
-              sizeof(write_t), W_SIZE,
-              sizeof(struct w_message), W_SEND_SIZE,
-              sizeof(w_mes_ud_t), W_RECV_SIZE);
-
-    my_printf(green, "W INLINING %d, PENDING WRITES %d \n",
-              W_ENABLE_INLINING, PENDING_WRITES);
-    my_printf(green, "R INLINING %d, PENDING_READS %d \n",
-              R_ENABLE_INLINING, PENDING_READS);
-    my_printf(green, "R_REP INLINING %d \n",
-              R_REP_ENABLE_INLINING);
-    my_printf(cyan, "W CREDITS %d, W BUF SLOTS %d, W BUF SIZE %d\n",
-              W_CREDITS, W_BUF_SLOTS, W_BUF_SIZE);
-
-    my_printf(yellow, "Remote Quorum Machines %d \n", REMOTE_QUORUM);
-    my_printf(green, "SEND W DEPTH %d, MESSAGES_IN_BCAST_BATCH %d, W_BCAST_SS_BATCH %d \n",
-              SEND_W_Q_DEPTH, MESSAGES_IN_BCAST_BATCH, W_BCAST_SS_BATCH);
+    //my_printf(green, "READ REPLY: r_rep message %lu/%d, r_rep message ud req %llu/%d,"
+    //            "read info %llu\n",
+    //          sizeof(struct r_rep_message), R_REP_SEND_SIZE,
+    //          sizeof(r_rep_mes_ud_t), R_REP_RECV_SIZE,
+    //          sizeof(r_info_t));
+    //my_printf(green, "W_COALESCE %d, R_COALESCE %d, ACC_COALESCE %u, "
+    //            "PROPOSE COALESCE %d, COM_COALESCE %d, MAX_WRITE_COALESCE %d,"
+    //            "PROP_COALESCE %d \n",
+    //          W_COALESCE, R_COALESCE, ACC_COALESCE, PROP_COALESCE, COM_COALESCE,
+    //          MAX_WRITE_COALESCE, PROP_COALESCE);
+    //
+    //
+    //my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
+    //          sizeof(ctx_ack_mes_t), CTX_ACK_SIZE,
+    //          sizeof(ctx_ack_mes_ud_t), CTX_ACK_RECV_SIZE);
+    //my_printf(yellow, "READ: read %lu/%d, read message %lu/%d, read message ud req %lu/%d\n",
+    //          sizeof(struct read), R_SIZE,
+    //          sizeof(struct r_message), PROP_SEND_SIZE,
+    //          sizeof(r_mes_ud_t), PROP_RECV_SIZE);
+    //my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
+    //          sizeof(write_t), W_SIZE,
+    //          sizeof(struct w_message), W_SEND_SIZE,
+    //          sizeof(w_mes_ud_t), W_RECV_SIZE);
+    //
+    //my_printf(green, "W INLINING %d, PENDING WRITES %d \n",
+    //          W_ENABLE_INLINING, PENDING_WRITES);
+    //
+    //my_printf(green, "R_REP INLINING %d \n",
+    //          R_REP_ENABLE_INLINING);
+    //my_printf(cyan, "W CREDITS %d, W BUF SLOTS %d, W BUF SIZE %d\n",
+    //          W_CREDITS, W_BUF_SLOTS, W_BUF_SIZE);
+    //
+    //my_printf(yellow, "Remote Quorum Machines %d \n", REMOTE_QUORUM);
+    //my_printf(green, "SEND W DEPTH %d, MESSAGES_IN_BCAST_BATCH %d, W_BCAST_SS_BATCH %d \n",
+    //          SEND_W_Q_DEPTH, MESSAGES_IN_BCAST_BATCH, W_BCAST_SS_BATCH);
   }
 }
 
@@ -235,20 +231,20 @@ void randomize_op_values(trace_op_t *ops, uint16_t t_id)
 
 
 /* ---------------------------------------------------------------------------
-------------------------------KITE WORKER --------------------------------------
+------------------------------CP WORKER --------------------------------------
 ---------------------------------------------------------------------------*/
 
 void cp_init_qp_meta(context_t *ctx)
 {
   per_qp_meta_t *qp_meta = ctx->qp_meta;
-  create_per_qp_meta(&qp_meta[R_QP_ID], MAX_R_WRS,
-                     MAX_RECV_R_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
+  create_per_qp_meta(&qp_meta[PROP_QP_ID], MAX_PROP_WRS,
+                     MAX_RECV_PROP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
                      R_REP_QP_ID,
-                     REM_MACH_NUM, REM_MACH_NUM, R_BUF_SLOTS,
-                     R_RECV_SIZE, R_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
-                     R_SEND_MCAST_QP, 0, R_FIFO_SIZE,
-                     R_CREDITS, R_MES_HEADER,
-                     "send reads", "recv reads");
+                     REM_MACH_NUM, REM_MACH_NUM, PROP_BUF_SLOTS,
+                     PROP_RECV_SIZE, PROP_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     PROP_SEND_MCAST_QP, 0, PROP_FIFO_SIZE,
+                     PROP_CREDITS, PROP_MES_HEADER,
+                     "send props", "recv props");
 
   ///
   create_per_qp_meta(&qp_meta[W_QP_ID], MAX_W_WRS,
@@ -262,11 +258,11 @@ void cp_init_qp_meta(context_t *ctx)
   ///
   create_per_qp_meta(&qp_meta[R_REP_QP_ID], MAX_R_REP_WRS,
                      MAX_RECV_R_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
-                     R_QP_ID,
+                     PROP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, R_REP_BUF_SLOTS,
                      R_REP_RECV_SIZE, R_REP_SEND_SIZE, false, false,
                      0, 0, R_REP_FIFO_SIZE,
-                     0, R_REP_MES_HEADER,
+                     0, PROP_REP_MES_HEADER,
                      "send r_reps", "recv r_reps");
   ///
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
@@ -325,9 +321,9 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
   // R_FIFO
   p_ops->r_fifo = (struct read_fifo *) calloc(1, sizeof(struct read_fifo));
-  fifo_t *r_send_fifo = ctx->qp_meta[R_QP_ID].send_fifo;
-  assert(r_send_fifo->max_byte_size == R_FIFO_SIZE * ALIGNED_R_SEND_SIDE);
-  p_ops->r_fifo->r_message = (struct r_message_template *) r_send_fifo->fifo; //calloc(R_FIFO_SIZE, (size_t) ALIGNED_R_SEND_SIDE);
+  fifo_t *r_send_fifo = ctx->qp_meta[PROP_QP_ID].send_fifo;
+  assert(r_send_fifo->max_byte_size == PROP_FIFO_SIZE * ALIGNED_R_SEND_SIDE);
+  p_ops->r_fifo->r_message = (struct r_message_template *) r_send_fifo->fifo; //calloc(PROP_FIFO_SIZE, (size_t) ALIGNED_R_SEND_SIDE);
 
   ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo; //calloc(MACHINE_NUM, sizeof(ctx_ack_mes_t));
   assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == CTX_ACK_SIZE * MACHINE_NUM);
@@ -360,7 +356,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
 
 
-   uint32_t max_incoming_w_r = (uint32_t) MAX(MAX_INCOMING_R, MAX_INCOMING_W);
+   uint32_t max_incoming_w_r = (uint32_t) MAX(MAX_INCOMING_PROP, MAX_INCOMING_W);
   p_ops->ptrs_to_mes_headers =
     (struct r_message **) malloc(max_incoming_w_r * sizeof(struct r_message *));
   p_ops->coalesce_r_rep =
@@ -380,11 +376,11 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   }
   p_ops->w_fifo->info[0].message_size = W_MES_HEADER;
 
-  for (i = 0; i < R_FIFO_SIZE; i++) {
+  for (i = 0; i < PROP_FIFO_SIZE; i++) {
     struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[i];
     r_mes->m_id= (uint8_t) machine_id;
   }
-  p_ops->r_fifo->info[0].message_size = R_MES_HEADER;
+  p_ops->r_fifo->info[0].message_size = PROP_MES_HEADER;
 
   for (i = 0; i < R_REP_FIFO_SIZE; i++) {
     struct rmw_rep_message *rmw_mes = (struct rmw_rep_message *) &p_ops->r_rep_fifo->r_rep_message[i];

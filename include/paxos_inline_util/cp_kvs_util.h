@@ -509,11 +509,11 @@ static inline void KVS_batch_op_reads(uint32_t op_num, uint16_t t_id, p_ops_t *p
   uint16_t op_i;	/* I is batch index */
   struct read **reads = (struct read **) p_ops->ptrs_to_mes_ops;
 
-  if (ENABLE_ASSERTIONS) assert(op_num <= MAX_INCOMING_R);
-  unsigned int bkt[MAX_INCOMING_R];
-  struct mica_bkt *bkt_ptr[MAX_INCOMING_R];
-  unsigned int tag[MAX_INCOMING_R];
-  mica_op_t *kv_ptr[MAX_INCOMING_R];	/* Ptr to KV item in log */
+  if (ENABLE_ASSERTIONS) assert(op_num <= MAX_INCOMING_PROP);
+  unsigned int bkt[MAX_INCOMING_PROP];
+  struct mica_bkt *bkt_ptr[MAX_INCOMING_PROP];
+  unsigned int tag[MAX_INCOMING_PROP];
+  mica_op_t *kv_ptr[MAX_INCOMING_PROP];	/* Ptr to KV item in log */
   /*
      * We first lookup the key in the datastore. The first two @I loops work
      * for both GETs and PUTs.
@@ -635,7 +635,7 @@ static inline void KVS_isolated_op(int t_id, write_t *write)
         }
       }
       //my_printf(red, "op val len %d in ptr %d, total ops %d \n", op->val_len, (w_pull_ptr + I) % max_op_size, op_num );
-      struct ts_tuple base_ts = {write->m_id, write->version};
+      ts_tuple_t base_ts = {write->m_id, write->version};
       write_kv_if_conditional_on_ts(kv_ptr, write->value,
                                     (size_t) VALUE_SIZE, FROM_ISOLATED_OP,
                                     base_ts);

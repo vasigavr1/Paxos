@@ -206,6 +206,52 @@ static inline void reset_sess_info_on_accept(sess_info_t *sess_info,
 //------------------------------ Inserting-utility----------------------------
 //---------------------------------------------------------------------------*/
 
+static inline void fill_prop(cp_prop_t *prop,
+                             loc_entry_t *loc_entry)
+{
+  assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
+  memcpy(&prop->key, (void *)&loc_entry->key, KEY_SIZE);
+  prop->opcode = PROPOSE_OP;
+  prop->l_id = loc_entry->l_id;
+  prop->t_rmw_id = loc_entry->rmw_id.id;
+  prop->log_no = loc_entry->log_no;
+  if (!loc_entry->base_ts_found)
+    prop->base_ts = loc_entry->base_ts;
+  else prop->base_ts.version = DO_NOT_CHECK_BASE_TS;
+  if (ENABLE_ASSERTIONS) {
+    assert(prop->ts.version >= PAXOS_TS);
+  }
+}
+
+inline void insert_prop_help(context_t *ctx, void* prop_ptr,
+                            void *source, uint32_t source_flag)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+
+  cp_prop_t *prop = (cp_prop_t *) prop_ptr;
+  loc_entry_t *loc_entry = (loc_entry_t *) source;
+
+  fill_prop(prop, loc_entry);
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) get_fifo_push_slot(send_fifo);
+  prop_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
+  // If it's the first message give it an lid
+  if (slot_meta->coalesce_num == 1) {
+    prop_mes->l_id = hr_ctx->inserted_w_id[ctx->m_id];
+    fifo_set_push_backward_ptr(send_fifo, hr_ctx->loc_w_rob->push_ptr);
+  }
+  // Bookkeeping
+  w_rob->w_state = VALID;
+  fifo_incr_push_ptr(hr_ctx->loc_w_rob);
+  hr_ctx->inserted_w_id[ctx->m_id]++;
+  hr_ctx->index_to_req_array[op->session_id] = op->index_to_req_array;
+}
+
+
+
 
 /*-------------READS/PROPOSES------------- */
 
@@ -233,14 +279,14 @@ static inline uint16_t get_read_size_from_opcode(uint8_t opcode) {
 // Set up a fresh read message to coalesce requests -- Proposes, reads, acquires
 static inline void reset_read_message(p_ops_t *p_ops)
 {
-  MOD_INCR(p_ops->r_fifo->push_ptr, R_FIFO_SIZE);
+  MOD_INCR(p_ops->r_fifo->push_ptr, PROP_FIFO_SIZE);
   uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
   struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_ptr];
   r_mes_info_t * info = &p_ops->r_fifo->info[r_mes_ptr];
 
   r_mes->l_id = 0;
   r_mes->coalesce_num = 0;
-  info->message_size = (uint16_t) R_MES_HEADER;
+  info->message_size = (uint16_t) PROP_MES_HEADER;
   info->max_rep_message_size = 0;
   info->reads_num = 0;
 }
@@ -254,13 +300,12 @@ static inline void* get_r_ptr(p_ops_t *p_ops, uint8_t opcode,
   uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
   r_mes_info_t *info = &p_ops->r_fifo->info[r_mes_ptr];
   uint16_t new_size = get_read_size_from_opcode(opcode);
-  if (is_propose) info->max_rep_message_size += PROP_REP_ACCEPTED_SIZE;
-  else if (is_get_ts) info->max_rep_message_size += R_REP_ONLY_TS_SIZE;
-  else info->max_rep_message_size += ACQ_REP_SIZE;
+  info->max_rep_message_size += PROP_REP_ACCEPTED_SIZE;
+
 
 
   bool new_message_because_of_r_rep = info->max_rep_message_size > MTU;
-  bool new_message = (info->message_size + new_size) > R_SEND_SIZE ||
+  bool new_message = (info->message_size + new_size) > PROP_SEND_SIZE ||
                      new_message_because_of_r_rep;
 
   if (new_message) {
@@ -285,7 +330,7 @@ static inline void* get_r_ptr(p_ops_t *p_ops, uint8_t opcode,
   uint32_t inside_r_ptr = info->message_size;
   info->message_size += new_size;
   if (ENABLE_ASSERTIONS) {
-    assert(info->message_size <= R_SEND_SIZE);
+    assert(info->message_size <= PROP_SEND_SIZE);
     assert(info->max_rep_message_size <= MTU);
   }
   return (void *) (((void *)r_mes) + inside_r_ptr);
@@ -603,7 +648,7 @@ static inline void set_up_r_rep_entry(struct r_rep_fifo *r_rep_fifo, uint8_t rem
   }
 
   r_rep_fifo->rem_m_id[r_rep_mes_ptr] = rem_m_id;
-  r_rep_fifo->message_sizes[r_rep_mes_ptr] = R_REP_MES_HEADER; // ok for rmws
+  r_rep_fifo->message_sizes[r_rep_mes_ptr] = PROP_REP_MES_HEADER; // ok for rmws
 }
 
 // Get a pointer to the read reply that will be sent, typically before going to the kvs,
@@ -736,7 +781,8 @@ static inline void set_up_rmw_acq_rep_message_size(p_ops_t *p_ops,
 //---------------------------------------------------------------------------*/
 
 // RMWs hijack the read fifo, to send propose broadcasts to all
-static inline void insert_prop_to_read_fifo(p_ops_t *p_ops, loc_entry_t *loc_entry,
+static inline void insert_prop_to_read_fifo(p_ops_t *p_ops,
+                                            loc_entry_t *loc_entry,
                                             uint16_t t_id)
 {
   if (loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED &&
@@ -1376,10 +1422,10 @@ static inline void increase_credits_when_polling_r_reps(context_t *ctx,
                                                         bool increase_w_credits,
                                                         uint8_t rem_m_id)
 {
-  uint16_t *r_credits = ctx->qp_meta[R_QP_ID].credits;
+  uint16_t *r_credits = ctx->qp_meta[PROP_QP_ID].credits;
   uint16_t *w_credits = ctx->qp_meta[W_QP_ID].credits;
   if (!increase_w_credits) {
-    if (r_credits[rem_m_id] < R_CREDITS)
+    if (r_credits[rem_m_id] < PROP_CREDITS)
       r_credits[rem_m_id]++;
   }
   else {
@@ -1387,9 +1433,9 @@ static inline void increase_credits_when_polling_r_reps(context_t *ctx,
       w_credits[rem_m_id]++;
   }
   if (ENABLE_ASSERTIONS) {
-    if (r_credits[rem_m_id] > R_CREDITS)
+    if (r_credits[rem_m_id] > PROP_CREDITS)
       my_printf(red, "Read credits %u \n", r_credits[rem_m_id]);
-    assert(r_credits[rem_m_id] <= R_CREDITS);
+    assert(r_credits[rem_m_id] <= PROP_CREDITS);
     assert(w_credits[rem_m_id] <= W_CREDITS);
   }
 }

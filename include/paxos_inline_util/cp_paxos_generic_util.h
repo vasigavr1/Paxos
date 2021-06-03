@@ -222,7 +222,7 @@ static inline void process_commit_flags(void* rmw, loc_entry_t *loc_entry, uint8
 
 static inline void fill_commit_info(commit_info_t *com_info, uint8_t flag,
                                     uint64_t rmw_id,
-                                    uint32_t log_no, struct ts_tuple base_ts,
+                                    uint32_t log_no, ts_tuple_t base_ts,
                                     uint8_t *value, bool overwrite_kv)
 {
   com_info->rmw_id.id = rmw_id;

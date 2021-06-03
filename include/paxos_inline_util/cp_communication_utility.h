@@ -78,7 +78,7 @@ static inline void forge_r_rep_wr(uint32_t r_rep_pull_ptr, uint16_t mes_i, conte
 static inline void forge_r_wr(uint32_t r_mes_i, context_t *ctx,
                               uint16_t br_i)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   struct ibv_sge *send_sgl = qp_meta->send_sgl;
   uint16_t i;
@@ -93,7 +93,7 @@ static inline void forge_r_wr(uint32_t r_mes_i, context_t *ctx,
     adaptive_inlining(send_sgl[br_i].length, &qp_meta->send_wr[br_i * MESSAGES_IN_BCAST], MESSAGES_IN_BCAST);
   if (ENABLE_ASSERTIONS) {
     assert(coalesce_num > 0);
-    assert(send_sgl[br_i].length <= R_SEND_SIZE);
+    assert(send_sgl[br_i].length <= PROP_SEND_SIZE);
   }
   if (DEBUG_READS && all_reads)
     my_printf(green, "Wrkr %d : I BROADCAST a read message %d of %u reads with mes_size %u, with credits: %d, lid: %u  \n",

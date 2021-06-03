@@ -10,10 +10,10 @@
 /*For reads and writes we want more slots than RECV_WRS because of multicasts:
  * if the machine sleeps, it will keep "receiving" messages. If the buffer space is smaller
  * than the receives_wrs, then the buffer will get corrupted!*/
-#define R_BUF_SLOTS MAX((REM_MACH_NUM * R_CREDITS), (MAX_RECV_R_WRS + 1))
-#define R_BUF_SIZE (R_RECV_SIZE * R_BUF_SLOTS)
+#define PROP_BUF_SLOTS MAX((REM_MACH_NUM * PROP_CREDITS), (MAX_RECV_PROP_WRS + 1))
+#define PROP_BUF_SIZE (PROP_RECV_SIZE * R_BUF_SLOTS)
 
-#define R_REP_BUF_SLOTS ((REM_MACH_NUM * R_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
+#define R_REP_BUF_SLOTS ((REM_MACH_NUM * PROP_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
 #define R_REP_BUF_SIZE (R_REP_RECV_SIZE * R_REP_BUF_SLOTS)
 
 #define W_BUF_SLOTS MAX((REM_MACH_NUM * W_CREDITS), (MAX_RECV_W_WRS + 1))
@@ -28,12 +28,6 @@
 #define R_REP_SS_BATCH MAX(MIN_SS_BATCH, (MAX_R_REP_WRS + 1))
 #define ACK_SS_BATCH MAX(MIN_SS_BATCH, (MAX_ACK_WRS + 2))
 
-
-//  Receive
-#define RECV_ACK_Q_DEPTH (MAX_RECV_ACK_WRS + 3)
-#define RECV_W_Q_DEPTH  (MAX_RECV_W_WRS + 3) //
-#define RECV_R_Q_DEPTH (MAX_RECV_R_WRS + 3) //
-#define RECV_R_REP_Q_DEPTH (MAX_RECV_R_REP_WRS + 3)
 
 // Send
 #define SEND_ACK_Q_DEPTH ((2 * ACK_SS_BATCH) + 3)

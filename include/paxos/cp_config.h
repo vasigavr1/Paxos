@@ -19,9 +19,10 @@ void cp_stats(stats_ctx_t *ctx);
 
 
 // CORE CONFIGURATION
-#define R_CREDITS 3//
+#define PROP_CREDITS 3//
 #define W_CREDITS 8
 #define MAX_READ_SIZE 730 //300 in terms of bytes for Reads/Acquires/RMW-Acquires/Proposes
+#define PROP_COALESCE 10
 #define MAX_WRITE_SIZE 800 // only writes 400 -- only rmws 1200 in terms of bytes for Writes/Releases/Accepts/Commits
 //#define MIN_SS_BATCH 127// The minimum SS batch -- moved to top
 #define MEASURE_SLOW_PATH 0
@@ -53,7 +54,7 @@ void cp_stats(stats_ctx_t *ctx);
 #define DUMP_STATS_2_FILE 0
 
 
-#define R_SEND_MCAST_QP 0
+#define PROP_SEND_MCAST_QP 0
 #define W_SEND_MCAST_QP 1
 
 
@@ -96,10 +97,10 @@ typedef struct mica_op {
   uint32_t last_committed_log_no;
 
   // BYTES: 32 - 64 -- each takes 8
-  struct ts_tuple ts; // base base_ts
-  struct ts_tuple prop_ts;
-  struct ts_tuple accepted_ts;
-  struct ts_tuple base_acc_ts;
+  ts_tuple_t ts; // base base_ts
+  ts_tuple_t prop_ts;
+  ts_tuple_t accepted_ts;
+  ts_tuple_t base_acc_ts;
 
 
   // Cache-line 3 -- each rmw_id takes up 8 bytes
