@@ -192,7 +192,7 @@ enum {
 // QUEUE PAIRS
 #define QP_NUM 4
 #define PROP_QP_ID 0
-#define R_REP_QP_ID 1
+#define PROP_REP_QP_ID 1
 #define W_QP_ID 2
 #define ACK_QP_ID 3
 

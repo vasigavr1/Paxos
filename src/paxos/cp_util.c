@@ -233,13 +233,28 @@ void randomize_op_values(trace_op_t *ops, uint16_t t_id)
 /* ---------------------------------------------------------------------------
 ------------------------------CP WORKER --------------------------------------
 ---------------------------------------------------------------------------*/
+void cp_qp_meta_mfs(context_t *ctx)
+{
+  mf_t *mfs = calloc(QP_NUM, sizeof(mf_t));
+
+  mfs[PROP_QP_ID].insert_helper = insert_prop_help;
+  mfs[PROP_QP_ID].send_helper = send_props_helper;
+  mfs[PROP_QP_ID].recv_handler = prop_recv_handler;
+  mfs[PROP_QP_ID].recv_kvs = cp_KVS_batch_op_props;
+
+
+  mfs[PROP_REP_QP_ID].insert_helper = cp_insert_prop_rep_helper;
+
+  ctx_set_qp_meta_mfs(ctx, mfs);
+  free(mfs);
+}
 
 void cp_init_qp_meta(context_t *ctx)
 {
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   create_per_qp_meta(&qp_meta[PROP_QP_ID], MAX_PROP_WRS,
                      MAX_RECV_PROP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
-                     R_REP_QP_ID,
+                     PROP_REP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, PROP_BUF_SLOTS,
                      PROP_RECV_SIZE, PROP_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
                      PROP_SEND_MCAST_QP, 0, PROP_FIFO_SIZE,
@@ -256,7 +271,7 @@ void cp_init_qp_meta(context_t *ctx)
                      W_CREDITS, W_MES_HEADER,
                      "send writes", "recv writes");
   ///
-  create_per_qp_meta(&qp_meta[R_REP_QP_ID], MAX_R_REP_WRS,
+  create_per_qp_meta(&qp_meta[PROP_REP_QP_ID], MAX_R_REP_WRS,
                      MAX_RECV_R_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
                      PROP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, R_REP_BUF_SLOTS,
@@ -288,6 +303,13 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
 
   p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
+  p_ops->ptrs_to_prop = calloc(1, sizeof(ptrs_to_prop_t));
+  p_ops->ptrs_to_prop->ptr_to_ops = calloc(MAX_INCOMING_PROP, sizeof(cp_prop_t*));
+  p_ops->ptrs_to_prop->ptr_to_mes = calloc(MAX_INCOMING_PROP, sizeof(cp_prop_mes_t*));
+  p_ops->ptrs_to_prop->break_message = calloc(MAX_INCOMING_PROP, sizeof(bool));
+
+
+
   //p_ops->w_state = (uint8_t *) malloc(zk_ctx * sizeof(uint8_t *));
   p_ops->r_state = (uint8_t *) malloc(pending_reads * sizeof(uint8_t *));
   //p_ops->w_session_id = (uint32_t *) calloc(zk_ctx, sizeof(uint32_t));
@@ -303,7 +325,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
   // R_REP_FIFO
   p_ops->r_rep_fifo = (struct r_rep_fifo *) calloc(1, sizeof(struct r_rep_fifo));
-  fifo_t *r_rep_send_fifo = ctx->qp_meta[R_REP_QP_ID].send_fifo;
+  fifo_t *r_rep_send_fifo = ctx->qp_meta[PROP_REP_QP_ID].send_fifo;
   assert(r_rep_send_fifo->max_byte_size == R_REP_FIFO_SIZE * ALIGNED_R_REP_SEND_SIDE);
   p_ops->r_rep_fifo->r_rep_message = (struct r_rep_message_template *) r_rep_send_fifo->fifo;
     //(struct r_rep_message_template *) calloc((size_t)R_REP_FIFO_SIZE, (size_t)ALIGNED_R_REP_SEND_SIDE);

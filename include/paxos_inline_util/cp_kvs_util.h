@@ -288,11 +288,10 @@ static inline void KVS_reads_get_TS(struct read *read, mica_op_t *kv_ptr,
 }
 
 // Handle remote proposes
-static inline void KVS_reads_proposes(struct read *read, mica_op_t *kv_ptr,
+static inline void KVS_reads_proposes(cp_prop_t *prop, mica_op_t *kv_ptr,
                                       p_ops_t *p_ops, uint16_t op_i,
                                       uint16_t t_id)
 {
-  struct propose *prop = (struct propose *) read; //(((void *)read) + 3); // the propose starts at an offset of 5 bytes
   if (DEBUG_RMW) my_printf(green, "Worker %u trying a remote RMW propose on op %u\n", t_id, op_i);
   if (ENABLE_ASSERTIONS) assert(prop->ts.version > 0);
   uint64_t number_of_reqs = 0;
@@ -309,17 +308,8 @@ static inline void KVS_reads_proposes(struct read *read, mica_op_t *kv_ptr,
 
   lock_seqlock(&kv_ptr->seqlock);
   {
-    //check_for_same_ts_as_already_proposed(kv_ptr[I], prop, t_id);
-    // 1. check if it has been committed
-    // 2. first check the log number to see if it's SMALLER!! (leave the "higher" part after the KVS base_ts is also checked)
-    // Either way fill the reply_rmw fully, but have a specialized flag!
     if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
       if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
-        // 3. Check that the TS is higher than the KVS TS, setting the flag accordingly
-        //if (!ts_is_not_greater_than_kvs_ts(kv_ptr, &prop->base_ts, prop_m_id, t_id, prop_rep)) {
-        // 4. If the kv-pair has not been RMWed before grab an entry and ack
-        // 5. Else if log number is bigger than the current one, ack without caring about the ongoing RMWs
-        // 6. Else check the kv_ptr and send a response depending on whether there is an ongoing RMW and what that is
         prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
                                                             prop_rep, prop->log_no, true);
         // if the propose is going to be acked record its information in the kv_ptr
@@ -336,7 +326,6 @@ static inline void KVS_reads_proposes(struct read *read, mica_op_t *kv_ptr,
           assert(kv_ptr->prop_ts.version >= prop->ts.version);
           check_keys_with_one_trace_op(&prop->key, kv_ptr);
         }
-        //}
       }
     }
     if (ENABLE_DEBUG_RMW_KV_PTR) {
@@ -409,10 +398,10 @@ static inline void KVS_acquire_commits(r_info_t *r_info, mica_op_t *kv_ptr,
 
 /* The worker sends its local requests to this, reads check the ts_tuple and copy it to the op to get broadcast
  * Writes do not get served either, writes are only propagated here to see whether their keys exist */
-static inline void KVS_batch_op_trace(uint16_t op_num,
-                                      trace_op_t *op,
-                                      p_ops_t *p_ops,
-                                      uint16_t t_id)
+static inline void cp_KVS_batch_op_trace(uint16_t op_num,
+                                         trace_op_t *op,
+                                         p_ops_t *p_ops,
+                                         uint16_t t_id)
 {
   uint16_t op_i;
   if (ENABLE_ASSERTIONS) assert (op_num <= MAX_OP_BATCH);
@@ -503,13 +492,19 @@ static inline void KVS_batch_op_updates(uint16_t op_num, uint16_t t_id, write_t 
 
 // The worker send here the incoming reads, the reads check the incoming base_ts if it is  bigger/equal to the local
 // the just ack it, otherwise they send the value back
-static inline void KVS_batch_op_reads(uint32_t op_num, uint16_t t_id, p_ops_t *p_ops,
-                                      uint32_t pull_ptr, uint32_t max_op_size)
+static inline void cp_KVS_batch_op_props(context_t *ctx)
 {
-  uint16_t op_i;	/* I is batch index */
-  struct read **reads = (struct read **) p_ops->ptrs_to_mes_ops;
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
+  cp_prop_mes_t **prop_mes = p_ops->ptrs_to_prop->ptr_to_mes;
+  cp_prop_t **props = ptrs_to_prop->ptr_to_ops;
+  uint16_t op_num = ptrs_to_prop->polled_props;
+  uint16_t op_i;
 
-  if (ENABLE_ASSERTIONS) assert(op_num <= MAX_INCOMING_PROP);
+  if (ENABLE_ASSERTIONS) {
+    assert(props != NULL);
+    assert(op_num <= MAX_INCOMING_PROP);
+  }
   unsigned int bkt[MAX_INCOMING_PROP];
   struct mica_bkt *bkt_ptr[MAX_INCOMING_PROP];
   unsigned int tag[MAX_INCOMING_PROP];
@@ -519,63 +514,19 @@ static inline void KVS_batch_op_reads(uint32_t op_num, uint16_t t_id, p_ops_t *p
      * for both GETs and PUTs.
      */
   for(op_i = 0; op_i < op_num; op_i++) {
-    struct read *read = reads[(pull_ptr + op_i) % max_op_size];
-    if (unlikely(read->opcode == OP_ACQUIRE_FLIP_BIT)) continue; // This message is only meant to flip a bit and is thus a NO-OP
-    KVS_locate_one_bucket(op_i, bkt, &read->key , bkt_ptr, tag, kv_ptr, KVS);
+    KVS_locate_one_bucket(op_i, bkt, &props[op_i]->key , bkt_ptr, tag, kv_ptr, KVS);
   }
-  for(op_i = 0; op_i < op_num; op_i++) {
-    struct read *read = reads[(pull_ptr + op_i) % max_op_size];
-    if (unlikely(read->opcode == OP_ACQUIRE_FLIP_BIT)) continue;
-    KVS_locate_one_kv_pair(op_i, tag, bkt_ptr, kv_ptr, KVS);
-  }
+  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
   for(op_i = 0; op_i < op_num; op_i++) {
-    struct read *read = reads[(pull_ptr + op_i) % max_op_size];
-    if (read->opcode == OP_ACQUIRE_FLIP_BIT) {
-      insert_r_rep(p_ops, p_ops->ptrs_to_mes_headers[op_i]->l_id, t_id,
-                   p_ops->ptrs_to_mes_headers[op_i]->m_id,
-                   p_ops->coalesce_r_rep[op_i], read->opcode);
-      continue;
-    }
-    if(ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) {assert(false);}
-    /* We had a tag match earlier. Now compare log entry. */
-    bool key_found = memcmp(&kv_ptr[op_i]->key, &read->key, KEY_SIZE) == 0;
-    if(likely(key_found)) { //Cache Hit
-      check_state_with_allowed_flags(6, read->opcode, KVS_OP_GET, OP_ACQUIRE, OP_ACQUIRE_FP,
-                                     OP_GET_TS, PROPOSE_OP);
-      if (read->opcode == KVS_OP_GET || read->opcode == OP_ACQUIRE ||
-        read->opcode == OP_ACQUIRE_FP) {
-        KVS_reads_acquires_acquire_fp_and_reads(read, kv_ptr[op_i], p_ops, op_i, t_id);
-      }
-      else if (read->opcode == OP_GET_TS) {
-        KVS_reads_get_TS(read, kv_ptr[op_i], p_ops, op_i, t_id);
-      }
-      else if (ENABLE_RMWS) {
-        if (read->opcode == PROPOSE_OP) {
-          KVS_reads_proposes(read, kv_ptr[op_i], p_ops, op_i, t_id);
-        }
-        else if (read->opcode == OP_ACQUIRE || read->opcode == OP_ACQUIRE_FP) {
-          //assert(ENABLE_RMW_ACQUIRES);
-//            KVS_reads_acquires_acquire_fp_and_reads(read, kv_ptr[op_i], p_ops, op_i, t_id);
-        }
-        else if (ENABLE_ASSERTIONS){
-          //my_printf(red, "wrong Opcode in KVS: %d, req %d, m_id %u, val_len %u, version %u , \n",
-          //           op->opcode, I, reads[(w_pull_ptr + I) % max_op_size]->m_id,
-          //           reads[(w_pull_ptr + I) % max_op_size]->val_len,
-          //          reads[(w_pull_ptr + I) % max_op_size]->version);
-          assert(false);
-        }
-      }
-      else if (ENABLE_ASSERTIONS) assert(false);
-    }
-    else {  //Cache miss --> We get here if either tag or log key match failed
-      my_printf(red, "Opcode %s Kvs miss: bkt %u/%u, server %u/%u, tag %u/%u \n",
-                opcode_to_str(read->opcode), read->key.bkt, kv_ptr[op_i]->key.bkt,
-                read->key.server, kv_ptr[op_i]->key.server,
-                read->key.tag, kv_ptr[op_i]->key.tag);
-      //assert(false); // cant have a miss since, it hit in the source's kvs
-      exit(0);
-    }
+    od_KVS_check_key(kv_ptr[op_i], props[op_i]->key, op_i);
+    cp_prop_t *prop = props[op_i];
+    if (ENABLE_ASSERTIONS) assert(prop->opcode == PROPOSE_OP);
+
+    od_insert_mes(ctx, PROP_REP_QP_ID, PROP_REP_SMALL_SIZE, 0,
+                  ptrs_to_prop->break_message[op_i],
+                  (void *) kv_ptr[op_i], op_i, 0);
+    KVS_reads_proposes(prop, kv_ptr[op_i], p_ops, op_i, ctx->t_id);
   }
 }
 

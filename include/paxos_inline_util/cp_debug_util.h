@@ -6,10 +6,10 @@
 #define CP_DEBUG_UTIL_H
 
 #include <cp_config.h>
-#include "cp_config.h"
 #include "cp_main.h"
 #include "cp_generic_util.h"
 #include "od_debug_util.h"
+#include "od_network_context.h"
 
 
 /* ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ static inline void print_rmw_rep_info(loc_entry_t *loc_entry, uint16_t t_id) {
             rmw_rep->seen_higher_prop_acc, rmw_rep->log_too_high);
 }
 
-// Leader checks its debug counters
+// checks its debug counters
 static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_dbg_counter,
                                      p_ops_t *p_ops, void *buf,
                                      uint32_t r_pull_ptr, uint32_t w_pull_ptr,
@@ -141,7 +141,7 @@ static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_
     //exit(0);
   }
   // R_REPS
-  if (unlikely(wait_dbg_counter[R_REP_QP_ID] > M_512)) {
+  if (unlikely(wait_dbg_counter[PROP_REP_QP_ID] > M_512)) {
     my_printf(red, "Worker %d waits for r_reps \n", t_id);
     if (VERBOSE_DBG_COUNTER) {
       //r_rep_mes_ud_t *r_rep_buf =
@@ -168,7 +168,7 @@ static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_
       //}
     }
     print_wrkr_stats(t_id);
-    wait_dbg_counter[R_REP_QP_ID] = 0;
+    wait_dbg_counter[PROP_REP_QP_ID] = 0;
     //exit(0);
   }
   if (unlikely(wait_dbg_counter[PROP_QP_ID] > M_512)) {
@@ -188,7 +188,7 @@ static inline void check_debug_cntrs(uint32_t *credit_debug_cnt, uint32_t *wait_
   }
 }
 
-// When pulling a n ew req from the trace, check the req and the working session
+// When pulling a new req from the trace, check the req and the working session
 static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *op,
                                    int working_session, uint16_t t_id)
 {
@@ -198,7 +198,7 @@ static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *o
                                    OP_ACQUIRE, KVS_OP_GET, FETCH_AND_ADD, COMPARE_AND_SWAP_WEAK,
                                    COMPARE_AND_SWAP_STRONG);
     assert(op->opcode == trace->opcode);
-    assert(!p_ops->sess_info[working_session].stalled);
+    assert(!p_ops->stalled[working_session]);
     if (ENABLE_RMWS && p_ops->prop_info->entry[working_session].state != INVALID_RMW) {
       my_printf(cyan, "wrk %u  Session %u has loc_entry state %u , helping flag %u\n", t_id,
                 working_session, p_ops->prop_info->entry[working_session].state,
@@ -208,6 +208,38 @@ static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *o
   }
 }
 
+
+static inline void send_prop_checks(context_t *ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+
+  // Create the broadcast messages
+  cp_prop_mes_t *prop_buf = (cp_prop_mes_t *) qp_meta->send_fifo->fifo;
+  cp_prop_mes_t *prop_mes = &prop_buf[send_fifo->pull_ptr];
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
+  uint8_t coalesce_num = (uint8_t) slot_meta->coalesce_num;
+  if (ENABLE_ASSERTIONS) {
+    assert(send_fifo->net_capacity >= coalesce_num);
+    qp_meta->outstanding_messages += coalesce_num;
+    assert(prop_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
+    if (DEBUG_RMW) {
+      struct propose *prop = &prop_mes->prop[0];
+      my_printf(green, "Wrkr %u : I BROADCAST a propose message %u with %u props with mes_size %u, with credits: %d, lid: %u, "
+                       "rmw_id %u, glob_sess id %u, log_no %u, version %u \n",
+                ctx->t_id, prop->opcode, coalesce_num, slot_meta->byte_size,
+                qp_meta->credits[(machine_id + 1) % MACHINE_NUM], prop_mes->l_id,
+                prop->t_rmw_id, prop->t_rmw_id % GLOBAL_SESSION_NUM,
+                prop->log_no, prop->ts.version);
+    }
+
+  }
+  if (ENABLE_STAT_COUNTING) {
+
+  }
+}
 
 static inline void debug_and_count_stats_when_broadcasting_writes
   (p_ops_t *p_ops, uint32_t bcast_pull_ptr,
@@ -1033,34 +1065,37 @@ static inline void check_local_commit_from_rep(mica_op_t *kv_ptr, loc_entry_t *l
   }
 }
 
-static inline void check_when_polling_for_reads(struct r_message *r_mes, uint32_t index,
-                                                uint32_t polled_reads, uint16_t t_id)
+static inline void check_when_polling_for_props(context_t* ctx,
+                                                cp_prop_mes_t *prop_mes)
 {
-  uint8_t r_num = r_mes->coalesce_num;
+  uint8_t coalesce_num = prop_mes->coalesce_num;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
   if (ENABLE_ASSERTIONS) {
     //struct prop_message *p_mes = (struct prop_message *)r_mes;
-    struct read *read = &r_mes->read[0];
-    struct propose *prop =(struct propose *)&r_mes->read[0];
-    assert(r_mes->coalesce_num > 0);
-    if (DEBUG_READ_REPS)
-      printf("Worker %u sees a read Opcode %d at offset %d, l_id %lu  \n", t_id,
-             read->opcode, index, r_mes->l_id);
-    else if (DEBUG_RMW && r_mes->read[0].opcode == PROPOSE_OP) {
-      //struct prop_message *prop_mes = (struct prop_message *) r_mes;
-      my_printf(cyan, "Worker %u sees a Propose from m_id %u: opcode %d at offset %d, rmw_id %lu, "
+    cp_prop_t *prop = &prop_mes->prop[0];
+    assert(coalesce_num > 0);
+   if (DEBUG_RMW) {
+      my_printf(cyan, "Worker %u sees a Propose "
+                      "from m_id %u: opcode %d at offset %d, rmw_id %lu, "
                   "log_no %u, coalesce_num %u version %u \n",
-                t_id, r_mes->m_id, prop->opcode, index, prop->t_rmw_id,
+                ctx->t_id, prop_mes->m_id,
+                prop->opcode,
+                recv_fifo->pull_ptr,
+                prop->t_rmw_id,
                 prop->log_no,
-                r_mes->coalesce_num, prop->ts.version);
-      assert(r_mes->m_id != machine_id);
+                coalesce_num,
+                prop->ts.version);
+      assert(prop_mes->m_id != machine_id);
 
     }
-    if (polled_reads + r_num > MAX_INCOMING_PROP) assert(false);
+    if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_PROP) assert(false);
   }
   if (ENABLE_STAT_COUNTING) {
-    if (ENABLE_ASSERTIONS) t_stats[t_id].per_worker_reads_received[r_mes->m_id] += r_num;
-    t_stats[t_id].received_reads += r_num;
-    t_stats[t_id].received_reads_mes_num++;
+    if (ENABLE_ASSERTIONS)
+      t_stats[ctx->t_id].per_worker_reads_received[prop_mes->m_id] += coalesce_num;
+    t_stats[ctx->t_id].received_reads += coalesce_num;
+    t_stats[ctx->t_id].received_reads_mes_num++;
   }
 }
 

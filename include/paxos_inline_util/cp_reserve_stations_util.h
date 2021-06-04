@@ -223,8 +223,8 @@ static inline void fill_prop(cp_prop_t *prop,
   }
 }
 
-inline void insert_prop_help(context_t *ctx, void* prop_ptr,
-                            void *source, uint32_t source_flag)
+static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
+                                    void *source, uint32_t source_flag)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
@@ -243,6 +243,31 @@ inline void insert_prop_help(context_t *ctx, void* prop_ptr,
     prop_mes->l_id = p_ops->inserted_prop_id[ctx->m_id];
     p_ops->inserted_prop_id[ctx->m_id]++;
   }
+}
+
+static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
+                                             void *source, uint32_t op_i)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
+  cp_prop_t *prop = ptrs_to_prop->ptr_to_ops[op_i];
+
+
+  cp_prop_rep_t *prop_rep = (cp_prop_rep_t *) prop_rep_ptr;
+  fill_prop_rep(prop, prop_rep, mica_op_t *(source), ctx->t_id);
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  // TODO
+  slot_meta->byte_size += (new_size - PROP_REP_SMALL_SIZE);
+
+  cp_prop_rep_mes_t *prop_rep_mes = (cp_prop_rep_mes_t *) get_fifo_push_slot(send_fifo);
+  if (slot_meta->coalesce_num == 1) {
+    prop_rep_mes->l_id = ptrs_to_prop->ptr_to_mes[op_i]->l_id;
+    slot_meta->rm_id = ptrs_to_prop->ptr_to_mes[op_i]->m_id;
+  }
+
 }
 
 
@@ -1029,8 +1054,8 @@ static inline bool fill_trace_op(context_t *ctx,
     op->attempt_all_aboard = ctx->q_info->missing_num == 0;
   }
   increment_per_req_counters(op->opcode, t_id);
-  if (ENABLE_ASSERTIONS) assert(!p_ops->sess_info[working_session].stalled);
-  p_ops->sess_info[working_session].stalled = true;
+  if (ENABLE_ASSERTIONS) assert(!p_ops->stalled[working_session]);
+  p_ops->stalled[working_session] = true;
   op->session_id = (uint16_t) working_session;
 
   if (ENABLE_ASSERTIONS && DEBUG_SESSIONS)

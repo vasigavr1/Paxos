@@ -47,7 +47,7 @@ static inline int find_how_many_write_messages_can_be_polled(struct ibv_cq *w_re
 // Form the  work request for the read reply
 static inline void forge_r_rep_wr(uint32_t r_rep_pull_ptr, uint16_t mes_i, context_t *ctx) {
 
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_REP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   struct ibv_sge *send_sgl = qp_meta->send_sgl;
   struct ibv_send_wr *send_wr = qp_meta->send_wr;
@@ -63,8 +63,8 @@ static inline void forge_r_rep_wr(uint32_t r_rep_pull_ptr, uint16_t mes_i, conte
   checks_and_prints_when_forging_r_rep_wr(coalesce_num, mes_i, send_sgl, r_rep_pull_ptr,
                                           r_rep_mes, r_rep_fifo, ctx->t_id);
   uint8_t rm_id = r_rep_fifo->rem_m_id[r_rep_pull_ptr];
-  send_wr[mes_i].wr.ud.ah = rem_qp[rm_id][ctx->t_id][R_REP_QP_ID].ah;
-  send_wr[mes_i].wr.ud.remote_qpn = (uint32) rem_qp[rm_id][ctx->t_id][R_REP_QP_ID].qpn;
+  send_wr[mes_i].wr.ud.ah = rem_qp[rm_id][ctx->t_id][PROP_REP_QP_ID].ah;
+  send_wr[mes_i].wr.ud.remote_qpn = (uint32) rem_qp[rm_id][ctx->t_id][PROP_REP_QP_ID].qpn;
   selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
                                   mes_i, qp_meta->send_cq,
                                   qp_meta->enable_inlining,
@@ -74,60 +74,6 @@ static inline void forge_r_rep_wr(uint32_t r_rep_pull_ptr, uint16_t mes_i, conte
 
 
 
-// Form the Broadcast work request for the red
-static inline void forge_r_wr(uint32_t r_mes_i, context_t *ctx,
-                              uint16_t br_i)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  struct ibv_sge *send_sgl = qp_meta->send_sgl;
-  uint16_t i;
-  struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_i];
-  r_mes_info_t *info = &p_ops->r_fifo->info[r_mes_i];
-  uint16_t coalesce_num = r_mes->coalesce_num;
-  bool has_reads = info->reads_num > 0;
-  bool all_reads = info->reads_num == r_mes->coalesce_num;
-  send_sgl[br_i].length = info->message_size;
-  send_sgl[br_i].addr = (uint64_t) (uintptr_t) r_mes;
-  if (ENABLE_ADAPTIVE_INLINING)
-    adaptive_inlining(send_sgl[br_i].length, &qp_meta->send_wr[br_i * MESSAGES_IN_BCAST], MESSAGES_IN_BCAST);
-  if (ENABLE_ASSERTIONS) {
-    assert(coalesce_num > 0);
-    assert(send_sgl[br_i].length <= PROP_SEND_SIZE);
-  }
-  if (DEBUG_READS && all_reads)
-    my_printf(green, "Wrkr %d : I BROADCAST a read message %d of %u reads with mes_size %u, with credits: %d, lid: %u  \n",
-              ctx->t_id, r_mes->read[coalesce_num - 1].opcode, coalesce_num, send_sgl[br_i].length,
-              qp_meta->credits[(machine_id + 1) % MACHINE_NUM], r_mes->l_id);
-  else if (DEBUG_RMW) {
-    //struct prop_message *prop_mes = (struct prop_message *) r_mes;
-    struct propose *prop = (struct propose *) &r_mes->read[0];
-    my_printf(green, "Wrkr %u : I BROADCAST a propose message %u with %u props with mes_size %u, with credits: %d, lid: %u, "
-                "rmw_id %u, glob_sess id %u, log_no %u, version %u \n",
-              ctx->t_id, prop->opcode, coalesce_num, send_sgl[br_i].length,
-              qp_meta->credits[(machine_id + 1) % MACHINE_NUM], r_mes->l_id,
-              prop->t_rmw_id, prop->t_rmw_id % GLOBAL_SESSION_NUM,
-              prop->log_no, prop->ts.version);
-  }
-  if (has_reads) {
-    for (i = 0; i < info->reads_num; i++) {
-      p_ops->r_state[(info->backward_ptr + i) % PENDING_READS] = SENT;
-      if (DEBUG_READS)
-        my_printf(yellow, "Read %d/%u, message mes_size %d, version %u \n", i, coalesce_num,
-                  send_sgl[br_i].length, r_mes->read[i].ts.version);
-      if (ENABLE_ASSERTIONS && all_reads) {
-        check_state_with_allowed_flags(5, r_mes->read[i].opcode, KVS_OP_GET, OP_GET_TS,
-                                       OP_ACQUIRE, OP_ACQUIRE_FLIP_BIT);
-      }
-    }
-  }
-  if (ENABLE_ASSERTIONS) {
-    //assert(send_wr[get_last_message_of_bcast((br_i + 1), q_info)].sg_list == &send_sgl[br_i]);
-  }
-  form_bcast_links(&qp_meta->sent_tx, qp_meta->ss_batch, ctx->q_info, br_i,
-                   qp_meta->send_wr, qp_meta->send_cq, qp_meta->send_string,
-                   ctx->t_id);
-}
 
 
 // Form the Broadcast work request for the write

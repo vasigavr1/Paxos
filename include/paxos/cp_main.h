@@ -246,13 +246,21 @@ struct pending_out_of_epoch_writes {
 typedef struct trace_op trace_op_t;
 typedef struct cp_p_ops_debug cp_debug_t;
 
+typedef struct ptrs_to_props {
+  uint16_t polled_props;
+  cp_prop_t **ptr_to_ops;
+  cp_prop_mes_t **ptr_to_mes;
+  bool *break_message;
+} ptrs_to_prop_t;
+
 typedef struct pending_ops {
 	write_fifo_t *w_fifo;
   struct read_fifo *r_fifo;
   struct r_rep_fifo *r_rep_fifo;
   //ctx_ack_mes_t *ack_send_buf;
   //write_t **ptrs_to_w_ops; // used for remote writes
-  void **ptrs_to_mes_ops; // used for remote reads
+  void **ptrs_to_mes_ops; // used for remote proposes
+  ptrs_to_prop_t *ptrs_to_prop;
 
   trace_t *trace;
   uint32_t trace_iter;

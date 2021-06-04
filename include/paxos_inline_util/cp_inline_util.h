@@ -4,12 +4,11 @@
 //#include "kvs.h"
 #include "od_hrd.h"
 
-
+#include "od_inline_util.h"
 #include "cp_generic_util.h"
 #include "cp_kvs_util.h"
 #include "cp_debug_util.h"
 #include "cp_config_util.h"
-#include "od_inline_util.h"
 #include "cp_paxos_util.h"
 #include "cp_reserve_stations_util.h"
 #include "cp_communication_utility.h"
@@ -75,7 +74,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 
   p_ops->last_session = (uint16_t) working_session;
   t_stats[ctx->t_id].cache_hits_per_thread += op_i;
-  KVS_batch_op_trace(op_i, ops, p_ops, ctx->t_id);
+  cp_KVS_batch_op_trace(op_i, ops, p_ops, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
     insert_rmw(p_ops, &ops[i], ctx->t_id);
   }
@@ -177,13 +176,18 @@ static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
 /* ---------------------------------------------------------------------------
 //------------------------------ BROADCASTS ----------------------------------
 //---------------------------------------------------------------------------*/
+static inline void send_props_helper(context_t *ctx)
+{
+  send_prop_checks(ctx);
+}
+
 // Broadcast Writes
 static inline void broadcast_writes(context_t *ctx)
 {
   //printf("Worker %d bcasting writes \n", t_id);
   per_qp_meta_t *qp_meta = &ctx->qp_meta[W_QP_ID];
   per_qp_meta_t *ack_qp_meta = &ctx->qp_meta[ACK_QP_ID];
-  per_qp_meta_t *r_rep_qp_meta = &ctx->qp_meta[R_REP_QP_ID];
+  per_qp_meta_t *r_rep_qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
 
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   uint16_t br_i = 0, mes_sent = 0, available_credits = 0;
@@ -244,57 +248,7 @@ static inline void broadcast_writes(context_t *ctx)
 }
 
 
-// Broadcast Reads
-static inline void broadcast_reads(context_t *ctx)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
-  per_qp_meta_t *r_rep_qp_meta = &ctx->qp_meta[R_REP_QP_ID];
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  uint16_t br_i = 0, mes_sent = 0, available_credits = 0;
-  uint32_t bcast_pull_ptr = p_ops->r_fifo->bcast_pull_ptr;
 
-  if (p_ops->r_fifo->bcast_size == 0)  return;
-  else if (!check_bcast_credits(qp_meta->credits, ctx->q_info,
-                                &qp_meta->time_out_cnt,
-                                &available_credits, 1,
-                                ctx->t_id)) return;
-
-  if (ENABLE_ASSERTIONS) assert(available_credits <= PROP_CREDITS);
-
-  while (p_ops->r_fifo->bcast_size > 0 &&  mes_sent < available_credits) {
-    if (DEBUG_READS)
-      printf("Wrkr %d has %u read bcasts to send credits %d\n",
-             ctx->t_id, p_ops->r_fifo->bcast_size, qp_meta->credits[0]);
-    // Create the broadcast messages
-    forge_r_wr(bcast_pull_ptr, ctx, br_i);
-    br_i++;
-    struct r_message * r_mes = (struct r_message *) &p_ops->r_fifo->r_message[bcast_pull_ptr];
-      uint8_t coalesce_num = r_mes->coalesce_num;
-    if (ENABLE_ASSERTIONS) {
-      assert( p_ops->r_fifo->bcast_size >= coalesce_num);
-      qp_meta->outstanding_messages += coalesce_num;
-    }
-    p_ops->r_fifo->bcast_size -= coalesce_num;
-    if (p_ops->r_fifo->bcast_size == 0) reset_read_message(p_ops);
-    mes_sent++;
-    MOD_INCR(bcast_pull_ptr, PROP_FIFO_SIZE);
-    if (br_i == MAX_BCAST_BATCH) {
-      post_quorum_broadasts_and_recvs(r_rep_qp_meta->recv_info,
-                                      r_rep_qp_meta->recv_wr_num - r_rep_qp_meta->recv_info->posted_recvs,
-                                      ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                      qp_meta->send_qp, qp_meta->enable_inlining);
-      br_i = 0;
-    }
-  }
-  if (br_i > 0) {
-    post_quorum_broadasts_and_recvs(r_rep_qp_meta->recv_info,
-                                    r_rep_qp_meta->recv_wr_num - r_rep_qp_meta->recv_info->posted_recvs,
-                                    ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                    qp_meta->send_qp, qp_meta->enable_inlining);
-  }
-  p_ops->r_fifo->bcast_pull_ptr = bcast_pull_ptr;
-  if (mes_sent > 0) decrease_credits(qp_meta->credits, ctx->q_info, mes_sent);
-}
 
 
 /* ---------------------------------------------------------------------------
@@ -304,7 +258,7 @@ static inline void broadcast_reads(context_t *ctx)
 // Send Read Replies
 static inline void send_r_reps(context_t *ctx)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_REP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   uint16_t mes_i = 0, accept_recvs_to_post = 0, read_recvs_to_post = 0;
   uint32_t pull_ptr = p_ops->r_rep_fifo->pull_ptr;
@@ -348,7 +302,32 @@ static inline void send_r_reps(context_t *ctx)
 /* ---------------------------------------------------------------------------
 //------------------------------ POLLING-------------------------------------
 //---------------------------------------------------------------------------*/
+static inline bool prop_recv_handler(context_t* ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  volatile cp_prop_mes_ud_t *incoming_props = (volatile cp_prop_mes_ud_t *) recv_fifo->fifo;
+  cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) &incoming_props[recv_fifo->pull_ptr].prop_mes;
 
+  check_when_polling_for_props(ctx, prop_mes);
+
+  uint8_t coalesce_num = prop_mes->coalesce_num;
+
+  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
+  if (qp_meta->polled_messages == 0) ptrs_to_prop->polled_props = 0;
+
+  for (uint16_t i = 0; i < coalesce_num; i++) {
+    cp_prop_t *prop = &prop_mes->prop[i];
+    check_state_with_allowed_flags(2, prop->opcode, PROPOSE_OP);
+    ptrs_to_prop->ptr_to_ops[ptrs_to_prop->polled_props] = (void *) prop;
+    ptrs_to_prop->ptr_to_mes[ptrs_to_prop->polled_props] = prop_mes;
+    ptrs_to_prop->break_message[ptrs_to_prop->polled_props] = i == 0;
+    ptrs_to_prop->polled_props++;
+  }
+
+  return true;
+}
 
 // Poll for the write broadcasts
 static inline void poll_for_writes(context_t *ctx,
@@ -456,7 +435,6 @@ static inline void poll_for_reads(context_t *ctx)
   while (qp_meta->polled_messages < completed_messages) {
     volatile r_mes_ud_t *incoming_rs = (volatile r_mes_ud_t *) qp_meta->recv_fifo->fifo;
     r_mes_t *r_mes = (r_mes_t *) &incoming_rs[recv_fifo->pull_ptr].r_mes;
-    check_when_polling_for_reads(r_mes, recv_fifo->pull_ptr, polled_reads, ctx->t_id);
     uint8_t r_num = r_mes->coalesce_num;
     uint16_t byte_ptr = PROP_MES_HEADER;
     for (uint16_t i = 0; i < r_num; i++) {
@@ -657,7 +635,7 @@ static inline void poll_acks(context_t *ctx)
 //Poll for read replies
 static inline void poll_for_read_replies(context_t *ctx)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[R_REP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   if (p_ops->r_rep_fifo->mes_size == R_REP_FIFO_SIZE) return;
@@ -798,8 +776,8 @@ static void cp_main_loop(context_t *ctx)
     cp_checks_at_loop_start(ctx);
 
     batch_requests_to_KVS(ctx);
-
-    broadcast_reads(ctx);
+    ctx_send_broadcasts(ctx, PROP_QP_ID);
+    ctx_poll_incoming_messages(ctx, PROP_QP_ID);
 
     broadcast_writes(ctx);
 

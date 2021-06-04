@@ -6,6 +6,7 @@
 #include "od_kvs.h"
 #include "od_hrd.h"
 #include "cp_main.h"
+#include "cp_inline_util.h"
 #include "od_network_context.h"
 #include <od_init_func.h>
 

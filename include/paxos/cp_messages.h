@@ -206,6 +206,11 @@ typedef struct cp_prop_mes {
   cp_prop_t prop[PROP_COALESCE];
 }__attribute__((__packed__)) cp_prop_mes_t;
 
+typedef struct cp_prop_message_ud_req {
+  uint8_t grh[GRH_SIZE];
+  cp_prop_mes_t prop_mes;
+} cp_prop_mes_ud_t;
+
 typedef struct w_message {
   uint64_t l_id;
   uint8_t m_id;
@@ -254,24 +259,24 @@ struct r_rep_big {
 
 
 //
-typedef struct r_rep_message {
-  uint8_t coalesce_num;
-  uint8_t m_id;
-  uint8_t opcode;
-  uint64_t l_id;
-  struct r_rep_big r_rep[MAX_R_REP_COALESCE];
-} __attribute__((__packed__)) r_rep_mes_t;
+//typedef struct r_rep_message {
+//  uint8_t coalesce_num;
+//  uint8_t m_id;
+//  uint8_t opcode;
+//  uint64_t l_id;
+//  struct r_rep_big r_rep[MAX_R_REP_COALESCE];
+//} __attribute__((__packed__)) r_rep_mes_t;
 
 
-typedef struct r_rep_message_ud_req {
-  uint8_t unused[GRH_SIZE];
-  uint8_t r_rep_mes[ALIGNED_R_REP_SEND_SIDE];
-} r_rep_mes_ud_t;
+//typedef struct r_rep_message_ud_req {
+//  uint8_t unused[GRH_SIZE];
+//  uint8_t r_rep_mes[ALIGNED_R_REP_SEND_SIDE];
+//} r_rep_mes_ud_t;
 
 // Reply for both accepts and proposes
 // Reply with the last committed RMW if the
 // proposal/accept had a low log number or has already been committed
-struct rmw_rep_last_committed {
+typedef struct rmw_rep_last_committed {
   uint8_t opcode;
   uint64_t l_id; // the l_id of the rmw local_entry
   struct network_ts_tuple ts; // This is the base for RMW-already-committed or Log-to-low, it's proposed/accepted ts for the rest
@@ -279,16 +284,16 @@ struct rmw_rep_last_committed {
   uint64_t rmw_id; //accepted  OR last committed
   uint32_t log_no_or_base_version; // log no for RMW-already-committed/Log-too-low, base_ts.version for proposed/accepted
   uint8_t base_m_id; // base_ts.m_id used for accepts only
-} __attribute__((__packed__));
+} __attribute__((__packed__)) cp_prop_rep_t;
 
 //
-struct rmw_rep_message {
+typedef struct rmw_rep_message {
   uint8_t coalesce_num;
   uint8_t m_id;
   uint8_t opcode;
   uint64_t l_id ;
-  struct rmw_rep_last_committed rmw_rep[PROP_COALESCE];
-}__attribute__((__packed__));
+  cp_prop_rep_t rmw_rep[PROP_COALESCE];
+}__attribute__((__packed__)) cp_prop_rep_mes_t;
 
 
 
