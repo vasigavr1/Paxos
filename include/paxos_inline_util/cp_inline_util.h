@@ -76,7 +76,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   t_stats[ctx->t_id].cache_hits_per_thread += op_i;
   cp_KVS_batch_op_trace(op_i, ops, p_ops, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
-    insert_rmw(p_ops, &ops[i], ctx->t_id);
+    insert_rmw(ctx, &ops[i], ctx->t_id);
   }
 }
 
@@ -85,8 +85,9 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 //---------------------------------------------------------------------------*/
 
 // Worker inspects its local RMW entries
-static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
+static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 {
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   for (uint16_t sess_i = 0; sess_i < SESSIONS_PER_THREAD; sess_i++) {
     loc_entry_t* loc_entry = &p_ops->prop_info->entry[sess_i];
     uint8_t state = loc_entry->state;
@@ -158,13 +159,13 @@ static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
       check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
                                      NEEDS_KV_PTR, MUST_BCAST_COMMITS);
       if (loc_entry->state == PROPOSED) {
-        insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
+        cp_prop_insert(ctx, loc_entry);
       }
     }
 
     /* =============== NEEDS_KV_PTR ======================== */
     if (state == NEEDS_KV_PTR) {
-      handle_needs_kv_ptr_state(p_ops, loc_entry, sess_i, t_id);
+      handle_needs_kv_ptr_state(ctx, loc_entry, sess_i, t_id);
       check_state_with_allowed_flags(6, (int) loc_entry->state, INVALID_RMW, PROPOSED, NEEDS_KV_PTR,
                                      ACCEPTED, MUST_BCAST_COMMITS);
     }
@@ -176,6 +177,7 @@ static inline void inspect_rmws(p_ops_t *p_ops, uint16_t t_id)
 /* ---------------------------------------------------------------------------
 //------------------------------ BROADCASTS ----------------------------------
 //---------------------------------------------------------------------------*/
+
 static inline void send_props_helper(context_t *ctx)
 {
   send_prop_checks(ctx);
@@ -255,47 +257,9 @@ static inline void broadcast_writes(context_t *ctx)
 //------------------------------ UNICASTS-------------------------------------
 //---------------------------------------------------------------------------*/
 
-// Send Read Replies
-static inline void send_r_reps(context_t *ctx)
+static inline void cp_prop_rep_helper(context_t *ctx)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  uint16_t mes_i = 0, accept_recvs_to_post = 0, read_recvs_to_post = 0;
-  uint32_t pull_ptr = p_ops->r_rep_fifo->pull_ptr;
-  struct ibv_send_wr *bad_send_wr;
-
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-  while (r_rep_fifo->total_size > 0) {
-    struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[pull_ptr];
-    // Create the r_rep messages
-    forge_r_rep_wr(pull_ptr, mes_i, ctx);
-    uint8_t coalesce_num = r_rep_mes->coalesce_num;
-    print_check_count_stats_when_sending_r_rep(r_rep_fifo, coalesce_num, mes_i, ctx->t_id);
-    r_rep_fifo->total_size -= coalesce_num;
-    r_rep_fifo->mes_size--;
-    //r_reps_sent += coalesce_num;
-    if (r_rep_mes->opcode == ACCEPT_REPLY)
-      accept_recvs_to_post++;
-    else if (r_rep_mes->opcode != ACCEPT_REPLY_NO_CREDITS)
-      read_recvs_to_post++;
-    MOD_INCR(pull_ptr, R_REP_FIFO_SIZE);
-    mes_i++;
-  }
-  if (mes_i > 0) {
-    if (read_recvs_to_post > 0) {
-      if (DEBUG_READ_REPS) printf("Wrkr %d posting %d read recvs\n", ctx->t_id,  read_recvs_to_post);
-      post_recvs_with_recv_info(ctx->qp_meta[PROP_QP_ID].recv_info, read_recvs_to_post);
-    }
-    if (accept_recvs_to_post > 0) {
-      if (DEBUG_RMW) printf("Wrkr %d posting %d accept recvs\n", ctx->t_id,  accept_recvs_to_post);
-      post_recvs_with_recv_info(ctx->qp_meta[W_QP_ID].recv_info, accept_recvs_to_post);
-    }
-    qp_meta->send_wr[mes_i - 1].next = NULL;
-    int ret = ibv_post_send(qp_meta->send_qp, qp_meta->send_wr, &bad_send_wr);
-    if (ENABLE_ASSERTIONS) CPE(ret, "R_REP ibv_post_send error", ret);
-  }
-  r_rep_fifo->pull_ptr = pull_ptr;
-
+  send_prop_rep_checks(ctx);
 }
 
 
@@ -324,6 +288,30 @@ static inline bool prop_recv_handler(context_t* ctx)
     ptrs_to_prop->ptr_to_mes[ptrs_to_prop->polled_props] = prop_mes;
     ptrs_to_prop->break_message[ptrs_to_prop->polled_props] = i == 0;
     ptrs_to_prop->polled_props++;
+  }
+
+  return true;
+}
+
+static inline bool cp_prop_rep_recv_handler(context_t* ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  volatile cp_prop_rep_mes_ud_t *incoming_prop_reps =
+      (volatile cp_prop_rep_mes_ud_t *) recv_fifo->fifo;
+  cp_rmw_rep_mes_t *prop_rep_mes =
+      (cp_rmw_rep_mes_t *) &incoming_prop_reps[recv_fifo->pull_ptr].prop_rep_mes;
+
+
+  bool is_accept = false;
+  handle_rmw_rep_replies(p_ops, prop_rep_mes, is_accept, ctx->t_id);
+
+  if (ENABLE_STAT_COUNTING) {
+    if (ENABLE_ASSERTIONS)
+      t_stats[ctx->t_id].per_worker_r_reps_received[prop_rep_mes->m_id] += prop_rep_mes->coalesce_num;
+    t_stats[ctx->t_id].received_r_reps += prop_rep_mes->coalesce_num;
+    t_stats[ctx->t_id].received_r_reps_mes_num++;
   }
 
   return true;
@@ -413,70 +401,7 @@ static inline void poll_for_writes(context_t *ctx,
 }
 
 
-// Poll for the r_rep broadcasts
-static inline void poll_for_reads(context_t *ctx)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
-  fifo_t *recv_fifo = qp_meta->recv_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  if (p_ops->r_rep_fifo->mes_size == R_REP_FIFO_SIZE) return;
 
-  int completed_messages =
-    find_how_many_messages_can_be_polled(qp_meta->recv_cq, qp_meta->recv_wc,
-                                         &qp_meta->completed_but_not_polled,
-                                         qp_meta->recv_buf_slot_num, ctx->t_id);
-  if (completed_messages <= 0) {
-    qp_meta->wait_for_reps_ctr++;
-    return;
-  }
-  qp_meta->polled_messages = 0;
-  uint32_t polled_reads = 0;
-  // Start polling
-  while (qp_meta->polled_messages < completed_messages) {
-    volatile r_mes_ud_t *incoming_rs = (volatile r_mes_ud_t *) qp_meta->recv_fifo->fifo;
-    r_mes_t *r_mes = (r_mes_t *) &incoming_rs[recv_fifo->pull_ptr].r_mes;
-    uint8_t r_num = r_mes->coalesce_num;
-    uint16_t byte_ptr = PROP_MES_HEADER;
-    for (uint16_t i = 0; i < r_num; i++) {
-      struct read *read = (struct read*)(((void *) r_mes) + byte_ptr);
-      //printf("Receiving read opcode %u \n", read->opcode);
-      bool is_propose = read->opcode == PROPOSE_OP;
-      if (is_propose) {
-        struct propose *prop = (struct propose *) read;
-        check_state_with_allowed_flags(2, prop->opcode, PROPOSE_OP);
-        p_ops->ptrs_to_mes_ops[polled_reads] = (void *) prop;
-      }
-      else {
-        check_read_opcode_when_polling_for_reads(read, i, r_num, ctx->t_id);
-        if (read->opcode == OP_ACQUIRE) {
-          read->opcode =
-            take_ownership_of_a_conf_bit(r_mes->l_id + i, (uint16_t) r_mes->m_id, false, ctx->t_id) ?
-            (uint8_t) OP_ACQUIRE_FP : (uint8_t) OP_ACQUIRE;
-        }
-        if (read->opcode == OP_ACQUIRE_FLIP_BIT)
-          raise_conf_bit_iff_owned(*(uint64_t *) &read->key, (uint16_t) r_mes->m_id, false, ctx->t_id);
-
-        p_ops->ptrs_to_mes_ops[polled_reads] = (void *) read;
-
-      }
-      p_ops->ptrs_to_mes_headers[polled_reads] = r_mes;
-      p_ops->coalesce_r_rep[polled_reads] = i > 0;
-      polled_reads++;
-      byte_ptr += get_read_size_from_opcode(read->opcode);
-    }
-    if (ENABLE_ASSERTIONS) r_mes->coalesce_num = 0;
-    fifo_incr_pull_ptr(recv_fifo);
-    qp_meta->polled_messages++;
-    if (ENABLE_ASSERTIONS)
-      assert(qp_meta->polled_messages + p_ops->r_rep_fifo->mes_size < R_REP_FIFO_SIZE);
-  }
-  // Poll for the completion of the receives
-  if (qp_meta->polled_messages > 0) {
-    KVS_batch_op_reads(polled_reads, ctx->t_id, p_ops, 0, MAX_INCOMING_PROP);
-    if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
-  }
-
-}
 
 
 
@@ -631,96 +556,6 @@ static inline void poll_acks(context_t *ctx)
 
 
 
-
-//Poll for read replies
-static inline void poll_for_read_replies(context_t *ctx)
-{
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
-  fifo_t *recv_fifo = qp_meta->recv_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  if (p_ops->r_rep_fifo->mes_size == R_REP_FIFO_SIZE) return;
-  int completed_messages =
-    find_how_many_messages_can_be_polled(qp_meta->recv_cq, qp_meta->recv_wc,
-                                         &qp_meta->completed_but_not_polled,
-                                         qp_meta->recv_buf_slot_num, ctx->t_id);
-  if (completed_messages <= 0) return;
-  qp_meta->polled_messages = 0;
-  // Start polling
-  while (qp_meta->polled_messages < completed_messages) {
-
-    volatile r_rep_mes_ud_t *incoming_r_reps = (volatile r_rep_mes_ud_t *) qp_meta->recv_fifo->fifo;
-    r_rep_mes_t *r_rep_mes = (r_rep_mes_t *) &incoming_r_reps[recv_fifo->pull_ptr].r_rep_mes;
-
-    print_and_check_mes_when_polling_r_reps(r_rep_mes, recv_fifo->pull_ptr, ctx->t_id);
-    bool is_propose = r_rep_mes->opcode == PROP_REPLY;
-    bool is_accept = r_rep_mes->opcode == ACCEPT_REPLY ||
-                     r_rep_mes->opcode == ACCEPT_REPLY_NO_CREDITS;
-    if (r_rep_mes->opcode != ACCEPT_REPLY_NO_CREDITS)
-      increase_credits_when_polling_r_reps(ctx, is_accept, r_rep_mes->m_id);
-
-    qp_meta->polled_messages++;
-    fifo_incr_pull_ptr(recv_fifo);
-    // If it is a reply to a propose/accept only call a different handler
-    if (is_propose || is_accept) {
-      handle_rmw_rep_replies(p_ops, r_rep_mes, is_accept, ctx->t_id);
-      continue;
-    }
-    check_state_with_allowed_flags(3, r_rep_mes->opcode, READ_REPLY, READ_PROP_REPLY);
-    r_rep_mes->opcode = INVALID_OPCODE; // a random meaningless opcode
-    uint8_t r_rep_num = r_rep_mes->coalesce_num;
-    // Find the request that the reply is referring to
-    uint64_t l_id = r_rep_mes->l_id;
-    uint64_t pull_lid = p_ops->local_r_id; // l_id at the pull pointer
-    uint32_t r_ptr; // a pointer in the FIFO, from where r_rep refers to
-
-    // if the pending read FIFO is empty it means the r_reps are for committed messages.
-    if (find_the_r_ptr_rep_refers_to(&r_ptr, l_id, pull_lid, p_ops,
-                                     r_rep_mes->opcode, r_rep_num,  ctx->t_id)) {
-      if (ENABLE_ASSERTIONS) assert(r_rep_mes->opcode == READ_REPLY); // there are no rmw reps
-      continue;
-    }
-
-    uint16_t byte_ptr = PROP_REP_MES_HEADER;
-    int read_i = -1; // count non-rmw read replies
-    for (uint16_t i = 0; i < r_rep_num; i++) {
-      struct r_rep_big *r_rep = (struct r_rep_big *)(((void *) r_rep_mes) + byte_ptr);
-      //if (r_rep->opcode > CARTS_EQUAL) printf("big opcode comes \n");
-      check_a_polled_r_rep(r_rep, r_rep_mes, i, r_rep_num, ctx->t_id);
-      byte_ptr += get_size_from_opcode(r_rep->opcode);
-      bool is_rmw_rep = opcode_is_rmw_rep(r_rep->opcode);
-      //printf("Wrkr %u, polling read %u/%u opcode %u irs_rmw %u\n",
-      //       t_id, i, r_rep_num, r_rep->opcode, is_rmw_rep);
-      if (!is_rmw_rep) {
-        read_i++;
-        if (handle_single_r_rep(r_rep, &r_ptr, l_id, pull_lid, p_ops, read_i, i,
-                                &ctx->qp_meta[PROP_QP_ID].outstanding_messages, ctx->t_id))
-          continue;
-      }
-      else handle_single_rmw_rep(p_ops, (struct rmw_rep_last_committed *) r_rep,
-        (struct rmw_rep_message *) r_rep_mes, byte_ptr, is_accept, i, ctx->t_id);
-    }
-    if (ENABLE_STAT_COUNTING) {
-      if (ENABLE_ASSERTIONS) t_stats[ctx->t_id].per_worker_r_reps_received[r_rep_mes->m_id] += r_rep_num;
-      t_stats[ctx->t_id].received_r_reps += r_rep_num;
-      t_stats[ctx->t_id].received_r_reps_mes_num++;
-    }
-  }
-  // Poll for the completion of the receives
-  if (qp_meta->polled_messages > 0) {
-    if (ENABLE_ASSERTIONS) assert(qp_meta->recv_info->posted_recvs >= qp_meta->polled_messages);
-    qp_meta->recv_info->posted_recvs -= qp_meta->polled_messages;
-    if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
-  }
-  else {
-    if (ENABLE_ASSERTIONS && ctx->qp_meta[PROP_QP_ID].outstanding_messages > 0)
-      qp_meta->wait_for_reps_ctr++;
-    if (ENABLE_STAT_COUNTING && ctx->qp_meta[PROP_QP_ID].outstanding_messages > 0)
-      t_stats[ctx->t_id].stalled_r_rep++;
-  }
-}
-
-
-
 /* ---------------------------------------------------------------------------
 //------------------------------ COMMITTING-------------------------------------
 //---------------------------------------------------------------------------*/
@@ -768,7 +603,7 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
 }
 
 
-static void cp_main_loop(context_t *ctx)
+_Noreturn static void cp_main_loop(context_t *ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   while(true) {
@@ -778,20 +613,14 @@ static void cp_main_loop(context_t *ctx)
     batch_requests_to_KVS(ctx);
     ctx_send_broadcasts(ctx, PROP_QP_ID);
     ctx_poll_incoming_messages(ctx, PROP_QP_ID);
+    ctx_send_unicasts(ctx, PROP_REP_QP_ID);
 
     broadcast_writes(ctx);
 
     poll_for_writes(ctx, W_QP_ID);
 
     od_send_acks(ctx, ACK_QP_ID);
-
-    poll_for_reads(ctx);
-
-    send_r_reps(ctx);
-
-    poll_for_read_replies(ctx);
-
-    inspect_rmws(p_ops, ctx->t_id);
+    inspect_rmws(ctx, ctx->t_id);
 
     poll_acks(ctx);
 

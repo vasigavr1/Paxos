@@ -219,135 +219,6 @@ static inline void KVS_updates_commits(struct commit *com, mica_op_t *kv_ptr,
   }
 }
 
-/*-----------------------------READS---------------------------------------------*/
-
-// Handle remote acquires, acquires-fp and reads (out-of-epoch)
-// (acquires-fp are acquires renamed by the receiver when a false positive is detected)
-static inline void KVS_reads_acquires_acquire_fp_and_reads(struct read *read, mica_op_t *kv_ptr,
-                                                           p_ops_t *p_ops, uint16_t op_i,
-                                                           uint16_t t_id)
-{
-  uint32_t debug_cntr = 0;
-  uint64_t l_id = p_ops->ptrs_to_mes_headers[op_i]->l_id;
-  uint8_t rem_m_id = p_ops->ptrs_to_mes_headers[op_i]->m_id;
-  struct r_rep_big *acq_rep =  get_r_rep_ptr(p_ops, l_id, rem_m_id, read->opcode,
-                                             p_ops->coalesce_r_rep[op_i], t_id);
-
-  uint32_t acq_log_no = read->log_no;
-
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    debug_stalling_on_lock(&debug_cntr, "reads: gets_or_acquires_or_acquires_fp", t_id);
-    check_keys_with_one_trace_op(&read->key, kv_ptr);
-    compare_t carts_comp = compare_netw_carts_with_carts(&read->ts, acq_log_no,
-                                                         &kv_ptr->ts, kv_ptr->last_committed_log_no);
-    if (carts_comp == SMALLER) {
-      if (ENABLE_ASSERTIONS) {
-        assert(read->ts.version <= kv_ptr->ts.version);
-      }
-      acq_rep->opcode = CARTS_TOO_SMALL;
-      acq_rep->rmw_id = kv_ptr->last_committed_rmw_id.id;
-      acq_rep->log_no = kv_ptr->last_committed_log_no;
-      memcpy(acq_rep->value, kv_ptr->value, (size_t) VALUE_SIZE);
-      acq_rep->base_ts.version = kv_ptr->ts.version;
-      acq_rep->base_ts.m_id = kv_ptr->ts.m_id;
-    }
-    else if (carts_comp == EQUAL) {
-      acq_rep->opcode = CARTS_EQUAL;
-    }
-    else {
-      if (ENABLE_ASSERTIONS) assert(carts_comp == GREATER);
-      acq_rep->opcode = CARTS_TOO_HIGH;
-    }
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-
-  set_up_rmw_acq_rep_message_size(p_ops, acq_rep->opcode, t_id);
-  finish_r_rep_bookkeeping(p_ops, (struct r_rep_big *) acq_rep,
-                           read->opcode == OP_ACQUIRE_FP, rem_m_id, t_id);
-}
-
-
-// Handle remote requests to get TS that are the first round of a release or of an out-of-epoch write
-static inline void KVS_reads_get_TS(struct read *read, mica_op_t *kv_ptr,
-                                    p_ops_t *p_ops, uint16_t op_i,
-                                    uint16_t t_id)
-{
-  uint32_t debug_cntr = 0;
-  uint8_t rem_m_id = p_ops->ptrs_to_mes_headers[op_i]->m_id;
-  struct r_rep_big *r_rep = get_r_rep_ptr(p_ops, p_ops->ptrs_to_mes_headers[op_i]->l_id,
-                                          rem_m_id, read->opcode, p_ops->coalesce_r_rep[op_i], t_id);
-
-  uint64_t tmp_lock = read_seqlock_lock_free(&kv_ptr->seqlock);
-  do {
-    debug_stalling_on_lock(&debug_cntr, "reads: get-TS-read version", t_id);
-    r_rep->base_ts.m_id = kv_ptr->ts.m_id;
-    r_rep->base_ts.version = kv_ptr->ts.version;
-  } while (!(check_seqlock_lock_free(&kv_ptr->seqlock, &tmp_lock)));
-  set_up_r_rep_message_size(p_ops, r_rep, &read->ts, true, t_id);
-  finish_r_rep_bookkeeping(p_ops, r_rep, false, rem_m_id, t_id);
-}
-
-// Handle remote proposes
-static inline void KVS_reads_proposes(cp_prop_t *prop, mica_op_t *kv_ptr,
-                                      p_ops_t *p_ops, uint16_t op_i,
-                                      uint16_t t_id)
-{
-  if (DEBUG_RMW) my_printf(green, "Worker %u trying a remote RMW propose on op %u\n", t_id, op_i);
-  if (ENABLE_ASSERTIONS) assert(prop->ts.version > 0);
-  uint64_t number_of_reqs = 0;
-  uint64_t rmw_l_id = prop->t_rmw_id;
-  uint64_t l_id = prop->l_id;
-  //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = prop->log_no;
-  uint8_t prop_m_id = p_ops->ptrs_to_mes_headers[op_i]->m_id;
-  struct rmw_rep_last_committed *prop_rep =
-    (struct rmw_rep_last_committed *) get_r_rep_ptr(p_ops, l_id, prop_m_id, read->opcode,
-                                                    p_ops->coalesce_r_rep[op_i], t_id);
-  prop_rep->l_id = prop->l_id;
-  //my_printf(green, "Sending prop_rep lid %u to m _id %u \n", prop_rep->l_id, prop_m_id);
-
-  lock_seqlock(&kv_ptr->seqlock);
-  {
-    if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
-      if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
-        prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
-                                                            prop_rep, prop->log_no, true);
-        // if the propose is going to be acked record its information in the kv_ptr
-        if (prop_rep->opcode == RMW_ACK) {
-          if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
-          activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
-                           prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                           ENABLE_ASSERTIONS ? "received propose" : NULL);
-        }
-        if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
-          prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
-        }
-        if (ENABLE_ASSERTIONS) {
-          assert(kv_ptr->prop_ts.version >= prop->ts.version);
-          check_keys_with_one_trace_op(&prop->key, kv_ptr);
-        }
-      }
-    }
-    if (ENABLE_DEBUG_RMW_KV_PTR) {
-      // kv_ptr->dbg->prop_acc_num++;
-      // number_of_reqs = kv_ptr->dbg->prop_acc_num;
-    }
-    check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
-  }
-  unlock_seqlock(&kv_ptr->seqlock);
-  if (PRINT_LOGS && ENABLE_DEBUG_RMW_KV_PTR)
-    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Prop: m_id:%u, rmw_id %lu, glob_sess id: %u, "
-              "version %u, m_id: %u, resp: %u \n",  kv_ptr->key.bkt, log_no, number_of_reqs, prop_m_id,
-            rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, prop->ts.version, prop->ts.m_id, prop_rep->opcode);
-  p_ops->r_rep_fifo->message_sizes[p_ops->r_rep_fifo->push_ptr]+= get_size_from_opcode(prop_rep->opcode);
-  if (ENABLE_ASSERTIONS) assert(p_ops->r_rep_fifo->message_sizes[p_ops->r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-  bool false_pos = take_ownership_of_a_conf_bit(rmw_l_id, prop_m_id, true, t_id);
-  finish_r_rep_bookkeeping(p_ops, (struct r_rep_big*) prop_rep, false_pos, prop_m_id, t_id);
-  //struct rmw_rep_message *rmw_mes = (struct rmw_rep_message *) &p_ops->r_rep_fifo->r_rep_message[p_ops->r_rep_fifo->w_push_ptr];
-
-}
-
-
 
 /*-----------------------------READ-COMMITTING---------------------------------------------*/
 // Perform the ooe-write after reading TSes
@@ -496,7 +367,6 @@ static inline void cp_KVS_batch_op_props(context_t *ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
-  cp_prop_mes_t **prop_mes = p_ops->ptrs_to_prop->ptr_to_mes;
   cp_prop_t **props = ptrs_to_prop->ptr_to_ops;
   uint16_t op_num = ptrs_to_prop->polled_props;
   uint16_t op_i;
@@ -526,7 +396,6 @@ static inline void cp_KVS_batch_op_props(context_t *ctx)
     od_insert_mes(ctx, PROP_REP_QP_ID, PROP_REP_SMALL_SIZE, 0,
                   ptrs_to_prop->break_message[op_i],
                   (void *) kv_ptr[op_i], op_i, 0);
-    KVS_reads_proposes(prop, kv_ptr[op_i], p_ops, op_i, ctx->t_id);
   }
 }
 

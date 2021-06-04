@@ -44,37 +44,6 @@ static inline int find_how_many_write_messages_can_be_polled(struct ibv_cq *w_re
 }
 
 
-// Form the  work request for the read reply
-static inline void forge_r_rep_wr(uint32_t r_rep_pull_ptr, uint16_t mes_i, context_t *ctx) {
-
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  struct ibv_sge *send_sgl = qp_meta->send_sgl;
-  struct ibv_send_wr *send_wr = qp_meta->send_wr;
-
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-  struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[r_rep_pull_ptr];
-  uint8_t coalesce_num = r_rep_mes->coalesce_num;
-  send_sgl[mes_i].length = r_rep_fifo->message_sizes[r_rep_pull_ptr];
-  if (ENABLE_ASSERTIONS) assert(send_sgl[mes_i].length <= R_REP_SEND_SIZE);
-  //printf("Forging a r_resp with capacity %u \n", send_sgl[mes_i].length);
-  send_sgl[mes_i].addr = (uint64_t) (uintptr_t) r_rep_mes;
-
-  checks_and_prints_when_forging_r_rep_wr(coalesce_num, mes_i, send_sgl, r_rep_pull_ptr,
-                                          r_rep_mes, r_rep_fifo, ctx->t_id);
-  uint8_t rm_id = r_rep_fifo->rem_m_id[r_rep_pull_ptr];
-  send_wr[mes_i].wr.ud.ah = rem_qp[rm_id][ctx->t_id][PROP_REP_QP_ID].ah;
-  send_wr[mes_i].wr.ud.remote_qpn = (uint32) rem_qp[rm_id][ctx->t_id][PROP_REP_QP_ID].qpn;
-  selective_signaling_for_unicast(&qp_meta->sent_tx, qp_meta->ss_batch, send_wr,
-                                  mes_i, qp_meta->send_cq,
-                                  qp_meta->enable_inlining,
-                                  qp_meta->send_string, ctx->t_id);
-  if (mes_i > 0) send_wr[mes_i - 1].next = &send_wr[mes_i];
-}
-
-
-
-
 
 // Form the Broadcast work request for the write
 static inline void forge_w_wr(uint32_t w_mes_i, context_t *ctx,

@@ -195,18 +195,6 @@ static inline uint16_t get_size_from_opcode(uint8_t opcode)
     case LOG_TOO_HIGH:
     case NO_OP_PROP_REP:
       return PROP_REP_SMALL_SIZE;
-      //---- RMW ACQUIRES--------
-    case CARTS_TOO_HIGH:
-    case CARTS_EQUAL:
-      return R_REP_SMALL_SIZE;
-    case CARTS_TOO_SMALL:
-      return ACQ_REP_SIZE;
-      // -----REGULAR READS/ACQUIRES----
-    case TS_TOO_HIGH:
-    case TS_EQUAL:
-      return R_REP_SMALL_SIZE;
-    case TS_TOO_SMALL:
-      return R_REP_ONLY_TS_SIZE;
     default: if (ENABLE_ASSERTIONS) {
         my_printf(red, "Opcode %u \n", opcode);
         assert(false);
@@ -420,6 +408,16 @@ static inline bool same_rmw_id_same_log(mica_op_t *kv_ptr, loc_entry_t *loc_entr
 {
   return rmw_ids_are_equal(&loc_entry->rmw_id, &kv_ptr->rmw_id) &&
          loc_entry->log_no == kv_ptr->log_no;
+}
+
+
+static inline void cp_prop_insert(context_t *ctx, loc_entry_t *loc_entry)
+{
+  od_insert_mes(ctx, PROP_QP_ID,
+                (uint32_t)PROP_SIZE,
+                PROP_REP_ACCEPTED_SIZE,
+                false, loc_entry,
+                0, 0);
 }
 
 #endif //CP_GENERIC_UTILITY_H

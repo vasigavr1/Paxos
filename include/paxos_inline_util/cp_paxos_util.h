@@ -112,12 +112,63 @@ static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
   }
   else return RMW_ACK;
 }
+
+static inline void create_prop_rep(cp_prop_t *prop,
+                                   cp_prop_rep_t *prop_rep,
+                                   mica_op_t *kv_ptr,
+                                   uint16_t t_id)
+{
+  uint64_t number_of_reqs = 0;
+  uint64_t rmw_l_id = prop->t_rmw_id;
+  uint64_t l_id = prop->l_id;
+  //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
+  uint32_t log_no = prop->log_no;
+  uint8_t prop_m_id = p_ops->ptrs_to_mes_headers[op_i]->m_id;
+
+  prop_rep->l_id = prop->l_id;
+  lock_seqlock(&kv_ptr->seqlock);
+  {
+    if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
+      if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
+        prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
+                                                            prop_rep, prop->log_no, true);
+        // if the propose is going to be acked record its information in the kv_ptr
+        if (prop_rep->opcode == RMW_ACK) {
+          if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
+          activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
+                           prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                           ENABLE_ASSERTIONS ? "received propose" : NULL);
+        }
+        if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
+          prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
+        }
+        if (ENABLE_ASSERTIONS) {
+          assert(kv_ptr->prop_ts.version >= prop->ts.version);
+          check_keys_with_one_trace_op(&prop->key, kv_ptr);
+        }
+      }
+    }
+    if (ENABLE_DEBUG_RMW_KV_PTR) {
+      // kv_ptr->dbg->prop_acc_num++;
+      // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+    }
+    check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
+  }
+  unlock_seqlock(&kv_ptr->seqlock);
+  if (PRINT_LOGS && ENABLE_DEBUG_RMW_KV_PTR)
+    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Prop: m_id:%u, rmw_id %lu, glob_sess id: %u, "
+                                 "version %u, m_id: %u, resp: %u \n",  kv_ptr->key.bkt, log_no, number_of_reqs, prop_m_id,
+            rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, prop->ts.version, prop->ts.m_id, prop_rep->opcode);
+
+
+}
+
 /*--------------------------------------------------------------------------
  * --------------------RECEIVING REPLY-UTILITY-------------------------------------
  * --------------------------------------------------------------------------*/
 
 // Search in the prepare entries for an lid (used when receiving a prep reply)
-static inline int search_prop_entries_with_l_id(struct prop_info *prop_info, uint8_t state, uint64_t l_id)
+static inline int search_prop_entries_with_l_id(struct prop_info *prop_info,uint8_t state, uint64_t l_id)
 {
   //for (uint16_t i = 0; i < LOCAL_PROP_NUM; i++) {
   uint16_t entry = (uint16_t) (l_id % SESSIONS_PER_THREAD);
@@ -785,7 +836,7 @@ static inline void handle_single_rmw_rep(p_ops_t *p_ops, struct rmw_rep_last_com
 }
 
 // Handle read replies that refer to RMWs (either replies to accepts or proposes)
-static inline void handle_rmw_rep_replies(p_ops_t *p_ops, struct r_rep_message *r_rep_mes,
+static inline void handle_rmw_rep_replies(p_ops_t *p_ops, cp_rmw_rep_mes_t *r_rep_mes,
                                           bool is_accept, uint16_t t_id)
 {
   struct rmw_rep_message *rep_mes = (struct rmw_rep_message *) r_rep_mes;
@@ -801,6 +852,8 @@ static inline void handle_rmw_rep_replies(p_ops_t *p_ops, struct r_rep_message *
   }
   r_rep_mes->opcode = INVALID_OPCODE;
 }
+
+
 
 
 
@@ -1269,11 +1322,12 @@ static inline void take_kv_ptr_with_higher_TS(p_ops_t *p_ops,
 
 
 // local_entry->state = NEEDS_KV_PTR
-static inline void handle_needs_kv_ptr_state(p_ops_t *p_ops,
+static inline void handle_needs_kv_ptr_state(context_t *ctx,
                                              loc_entry_t *loc_entry,
                                              uint16_t sess_i,
                                              uint16_t t_id)
 {
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
 
   // If this fails to grab a kv_ptr it will try to update
@@ -1302,7 +1356,7 @@ static inline void handle_needs_kv_ptr_state(p_ops_t *p_ops,
   }
   if (loc_entry->state == PROPOSED) {
     loc_entry->back_off_cntr = 0;
-    insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
+    cp_prop_insert(ctx, loc_entry);
   }
 
 }
@@ -1481,8 +1535,7 @@ static inline void insert_rmw(context_t *ctx, trace_op_t *op,
     }
     else {
       if (ENABLE_ASSERTIONS) assert(op->ts.version == PAXOS_TS);
-      od_insert_mes(ctx, PROP_QP_ID, (uint32_t) PROP_SIZE, PROP_REP_ACCEPTED_SIZE,
-                    false, loc_entry, 0, 0);
+      cp_prop_insert(ctx, loc_entry);
       //insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
     }
   }

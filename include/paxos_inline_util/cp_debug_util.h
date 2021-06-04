@@ -225,6 +225,9 @@ static inline void send_prop_checks(context_t *ctx)
     assert(send_fifo->net_capacity >= coalesce_num);
     qp_meta->outstanding_messages += coalesce_num;
     assert(prop_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
+    assert(prop_mes->coalesce_num > 0);
+    assert(prop_mes->m_id == (uint8_t) ctx->m_id);
+
     if (DEBUG_RMW) {
       struct propose *prop = &prop_mes->prop[0];
       my_printf(green, "Wrkr %u : I BROADCAST a propose message %u with %u props with mes_size %u, with credits: %d, lid: %u, "
@@ -237,9 +240,31 @@ static inline void send_prop_checks(context_t *ctx)
 
   }
   if (ENABLE_STAT_COUNTING) {
+    t_stats[ctx->t_id].proposes_sent++;
+  }
+}
+
+static inline void send_prop_rep_checks(context_t *ctx)
+{
+  if (ENABLE_ASSERTIONS) {
+    p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+    per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
+    fifo_t *send_fifo = qp_meta->send_fifo;
+
+    cp_rmw_rep_mes_t *prop_rep_buf = (cp_rmw_rep_mes_t *) qp_meta->send_fifo->fifo;
+    cp_rmw_rep_mes_t *prop_rep_mes = &prop_rep_buf[send_fifo->pull_ptr];
+    slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
+    if (DEBUG_RMW)
+      my_printf(yellow, "Worker %u sending prop_rep_mes l_id %lu, coalesce %u, to m_id %u, opcode %u\n",
+                ctx->t_id,
+                prop_rep_mes->l_id,
+                prop_rep_mes->coalesce_num,
+                prop_rep_mes->m_id,
+                prop_rep_mes->opcode);
 
   }
 }
+
 
 static inline void debug_and_count_stats_when_broadcasting_writes
   (p_ops_t *p_ops, uint32_t bcast_pull_ptr,
@@ -520,17 +545,7 @@ static inline void print_all_stalled_sessions(p_ops_t *p_ops, uint16_t t_id)
 
 
 
-//
-static inline void check_read_fifo_metadata(p_ops_t *p_ops, struct r_message *r_mes,
-                                            uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(p_ops->virt_r_size <= MAX_ALLOWED_R_SIZE); // this may need to be MAX_ALLOWED_R_SIZE + 1
-    assert(p_ops->r_size <= p_ops->virt_r_size);
-    assert(r_mes->coalesce_num <= PROP_COALESCE);
-    assert(p_ops->r_session_id[p_ops->r_push_ptr] <= SESSIONS_PER_THREAD);
-  }
-}
+
 
 static inline void check_global_sess_id(uint8_t machine_id, uint16_t t_id,
                                         uint16_t session_id, uint64_t rmw_id)
@@ -636,29 +651,7 @@ static inline void check_accept_mes(struct w_message *acc_mes)
   }
 }
 
-// Called when forging a read reply work request
-static inline void checks_and_prints_when_forging_r_rep_wr(uint8_t coalesce_num, uint16_t mes_i,
-                                                           struct ibv_sge *send_sgl, uint32_t r_rep_i,
-                                                           struct r_rep_message *r_rep_mes,
-                                                           struct r_rep_fifo *r_rep_fifo,
-                                                           uint16_t t_id)
-{
-  if (DEBUG_READ_REPS) {
-    for (uint16_t i = 0; i < coalesce_num; i++)
-      my_printf(yellow, "Wrkr: %u, Read Reply no %d, opcode :%u message mes_size %d \n",
-                t_id, i, r_rep_mes->opcode, send_sgl[mes_i].length);
-    my_printf(green, "Wrkr %d : I send a READ REPLY message of %u "
-                "r reps with mes_size %u, with lid: %u to machine %u \n",
-              t_id, coalesce_num, send_sgl[mes_i].length,
-              r_rep_mes->l_id, r_rep_fifo->rem_m_id[r_rep_i]);
-  }
-  if (ENABLE_ASSERTIONS) {
-    assert(send_sgl[mes_i].length < MTU);
-    assert(send_sgl[mes_i].length <= R_REP_SEND_SIZE);
-    assert(r_rep_fifo->rem_m_id[r_rep_i] < MACHINE_NUM);
-    assert(coalesce_num > 0);
-  }
-}
+
 
 
 
@@ -711,29 +704,6 @@ static inline void check_previous_read_lid(uint8_t source, uint8_t opcode, uint6
                     prev_coalesce, r_mes[prev_r_mes_ptr].read[0].opcode);
         }
       }
-    }
-  }
-}
-
-// Check when inserting a read
-static inline void check_read_state_and_key(p_ops_t *p_ops, uint32_t r_ptr, uint8_t source, struct r_message *r_mes,
-                                            r_info_t *r_info, uint32_t r_mes_ptr, struct read *read, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    if (p_ops->r_state[r_ptr] != INVALID)
-      my_printf(red, "Worker %u r_state %d at r_ptr %u, kvs hits %lu, r_size %u \n",
-                t_id, p_ops->r_state[r_ptr], r_ptr,
-                t_stats[t_id].cache_hits_per_thread, p_ops->r_size);
-    //printf("Sent %d, Valid %d, Ready %d \n", SENT, VALID, READY);
-    assert(p_ops->r_state[r_ptr] == INVALID);
-    //struct read *read = &r_mes[r_mes_ptr].read[inside_r_ptr];
-//    if (read->opcode == 0) my_printf(red, "R_mes_ptr %u, inside_r_ptr %u, first read opcode %u source %u \n",
-//      r_mes_ptr, inside_r_ptr, r_mes[r_mes_ptr].read[0].opcode);
-    check_state_with_allowed_flags(5, read->opcode, KVS_OP_GET, OP_GET_TS,
-                                   OP_ACQUIRE, OP_ACQUIRE_FLIP_BIT);
-    if (source == FROM_TRACE) {
-      assert(keys_are_equal(&read->key, &r_info->key));
-      assert(compare_netw_ts_with_ts(&read->ts, &r_info->ts_to_read) == EQUAL);
     }
   }
 }
@@ -861,21 +831,24 @@ static inline void check_sum_of_reps(loc_entry_t *loc_entry)
 
 
 static inline void check_loc_entry_metadata_is_reset(loc_entry_t* loc_entry,
-                                                     const char *message, uint16_t t_id)
+                                                     const char *message,
+                                                     uint16_t t_id)
 {
-  if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
-    if (loc_entry->help_loc_entry == NULL) {
-      //my_printf(red, "The help_loc_ptr is NULL. The reason is typically that help_loc_entry was passed to the function "
-      //           "instead of loc entry to check \n");
-      assert(loc_entry->state == INVALID_RMW);
-    }
-    else {
-      if (loc_entry->help_loc_entry->state != INVALID_RMW) {
-        my_printf(red, "Wrkr %u: %s \n", t_id, message);
-        assert(false);
+  if (loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED &&
+      loc_entry->helping_flag != PROPOSE_LOCALLY_ACCEPTED) {
+    if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
+      if (loc_entry->help_loc_entry == NULL) {
+        //my_printf(red, "The help_loc_ptr is NULL. The reason is typically that help_loc_entry was passed to the function "
+        //           "instead of loc entry to check \n");
+        assert(loc_entry->state == INVALID_RMW);
+      } else {
+        if (loc_entry->help_loc_entry->state != INVALID_RMW) {
+          my_printf(red, "Wrkr %u: %s \n", t_id, message);
+          assert(false);
+        }
+        assert(loc_entry->rmw_reps.tot_replies == 1);
+        assert(loc_entry->back_off_cntr == 0);
       }
-      assert(loc_entry->rmw_reps.tot_replies == 1);
-      assert(loc_entry->back_off_cntr == 0);
     }
   }
 }
@@ -1164,63 +1137,6 @@ static inline void check_all_w_meta(p_ops_t* p_ops, uint16_t t_id, const char* m
 
 
 
-
-// called when sending read replies
-static inline void print_check_count_stats_when_sending_r_rep(struct r_rep_fifo *r_rep_fifo,
-                                                              uint8_t coalesce_num,
-                                                              uint16_t mes_i, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    uint32_t pull_ptr = r_rep_fifo->pull_ptr;
-    struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[pull_ptr];
-    check_state_with_allowed_flags(6, r_rep_mes->opcode, ACCEPT_REPLY_NO_CREDITS, ACCEPT_REPLY,
-                                   PROP_REPLY, READ_REPLY, READ_PROP_REPLY);
-    uint16_t byte_ptr = PROP_REP_MES_HEADER;
-    struct r_rep_big *r_rep;
-    struct rmw_rep_last_committed *rmw_rep;
-    assert(r_rep_mes->coalesce_num > 0 && r_rep_mes->coalesce_num <= MAX_R_REP_COALESCE);
-    for (uint8_t i = 0; i < r_rep_mes->coalesce_num; i++) {
-      r_rep = (struct r_rep_big *)(((void *) r_rep_mes) + byte_ptr);
-      uint8_t opcode = r_rep->opcode;
-      //if (byte_ptr > 505)
-      //printf("%u/%u \n", byte_ptr, r_rep_fifo->message_sizes[w_pull_ptr]);
-      if (opcode > CARTS_EQUAL) opcode -= FALSE_POSITIVE_OFFSET;
-      if (opcode < TS_TOO_HIGH || opcode > CARTS_EQUAL)
-        printf("R_rep %u/%u, byte ptr %u/%u opcode %u/%u \n",
-               i, r_rep_mes->coalesce_num, byte_ptr, r_rep_fifo->message_sizes[pull_ptr],
-               opcode, r_rep_mes->opcode);
-
-
-      assert(opcode >= TS_TOO_HIGH && opcode <= CARTS_EQUAL);
-      bool is_rmw = false, is_rmw_acquire = false;
-      if (opcode >= RMW_ACK && opcode <= NO_OP_PROP_REP)
-        is_rmw = true;
-      else if (opcode > NO_OP_PROP_REP)
-        is_rmw_acquire = true;
-
-      if (is_rmw) {
-        check_state_with_allowed_flags(6, r_rep_mes->opcode, ACCEPT_REPLY_NO_CREDITS, ACCEPT_REPLY,
-                                       PROP_REPLY, READ_PROP_REPLY);
-        rmw_rep = (struct rmw_rep_last_committed *) r_rep;
-        assert(opcode_is_rmw_rep(rmw_rep->opcode));
-      }
-      byte_ptr += get_size_from_opcode(r_rep->opcode);
-
-    }
-    //if (r_rep->opcode > CARTS_EQUAL) printf("big opcode comes \n");
-    //check_a_polled_r_rep(r_rep, r_rep_mes, i, r_rep_num, t_id);
-    if (DEBUG_READ_REPS)
-      printf("Wrkr %d has %u read replies to send \n", t_id, r_rep_fifo->total_size);
-    if (ENABLE_ASSERTIONS) {
-      assert(r_rep_fifo->total_size >= coalesce_num);
-      assert(mes_i < MAX_R_REP_WRS);
-    }
-  }
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[t_id].r_reps_sent += coalesce_num;
-    t_stats[t_id].r_reps_sent_mes_num++;
-  }
-}
 
 static inline void checks_when_handling_prop_acc_rep(loc_entry_t *loc_entry,
                                                      struct rmw_rep_last_committed *rep,

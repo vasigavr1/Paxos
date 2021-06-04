@@ -14,6 +14,7 @@
 #include "cp_config_util.h"
 #include "cp_paxos_util.h"
 #include "cp_paxos_generic_util.h"
+#include "cp_config.h"
 
 //-------------------------------------------------------------------------------------
 // -------------------------------FORWARD DECLARATIONS--------------------------------
@@ -24,182 +25,10 @@ static inline void fill_commit_message_from_r_info(struct commit *com,
                                                    r_info_t* r_info, uint16_t t_id);
 
 static inline void KVS_isolated_op(int t_id, write_t *write);
-
-
-
-/*--------------------------------------------------------------------------
- * -----------------Trace-pulling utility------------------------------
- * --------------------------------------------------------------------------*/
-
-
-
-
-// In case of a miss in the KVS clean up the op, sessions and what not
-static inline void clean_up_on_KVS_miss(trace_op_t *op, p_ops_t *p_ops,
-                                        latency_info_t *latency_info, uint16_t t_id)
-{
-  if (op->opcode == OP_RELEASE || op->opcode == OP_ACQUIRE) {
-    uint16_t session_id = op->session_id;
-    my_printf(yellow, "Cache_miss, session %u \n", session_id);
-    if (ENABLE_ASSERTIONS) assert(session_id < SESSIONS_PER_THREAD);
-    p_ops->sess_info[session_id].stalled = false;
-    p_ops->all_sessions_stalled = false;
-    signal_completion_to_client(op->session_id, op->index_to_req_array, t_id);
-    t_stats[t_id].cache_hits_per_thread--;
-  }
-}
-
-
-/* -----------------------------------------------------
- * --------------------SESSION INFO----------------------
- * -----------------------------------------------------*/
-
-static inline void add_request_to_sess_info(sess_info_t *sess_info, uint16_t t_id)
-{
-  sess_info->live_writes++;
-  sess_info->ready_to_release = false;
-}
-
-static inline void check_sess_info_after_completing_release
-  (sess_info_t *sess_info, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(sess_info->stalled);
-    //assert(sess_info->ready_to_release);
-    //assert(sess_info->live_writes == 0);
-  }
-}
-
-
-// If we are not bothering sending a write to a machine, we note this machine
-// so that we know this amchine has not acked the write
-static inline void update_sess_info_missing_ids_when_sending
-  (p_ops_t *p_ops, w_mes_info_t *info,
-   quorum_info_t *q_info, uint8_t w_i, uint16_t t_id)
-{
-  if (q_info->missing_num == 0 ) return;
-  sess_info_t *sess_info = &p_ops->sess_info[info->per_message_sess_id[w_i]];
-
-  //printf("qinfo missing num %u, sess_info->missing_num %u \n");
-  for (uint8_t i = 0; i < q_info->missing_num; i++) {
-    bool found = false;
-    for (uint8_t j = 0; j < sess_info->missing_num; j++) {
-      if (q_info->missing_ids[i] == sess_info->missing_ids[j]) found = true;
-    }
-    if (!found) {
-      sess_info->missing_ids[sess_info->missing_num] = q_info->missing_ids[i];
-      sess_info->missing_num++;
-    }
-  }
-  //printf("after update \n");
-}
-
-
-static inline void update_sess_info_with_fully_acked_write(p_ops_t *p_ops,
-                                                           uint32_t w_ptr, uint16_t t_id)
-{
-  if (TURN_OFF_KITE) return;
-  sess_info_t *sess_info = &p_ops->sess_info[p_ops->w_meta[w_ptr].sess_id];
-  // The write gathered all expected acks so it needs not update the missing num or ids of the sess info
-  if (ENABLE_ASSERTIONS) assert(sess_info->live_writes > 0);
-  sess_info->live_writes--;
-//  printf("Removing a fully acked %u \n", sess_info->live_writes);
-
-  //my_printf(green, "increasing live writes %u \n", sess_info->live_writes);
-  if (sess_info->live_writes == 0) {
-    sess_info->ready_to_release = true;
-  }
-}
-
-static inline void update_sess_info_partially_acked_write(p_ops_t *p_ops,
-                                                          uint32_t w_ptr, uint16_t t_id)
-{
-  if (TURN_OFF_KITE) return;
-  sess_info_t *sess_info = &p_ops->sess_info[p_ops->w_meta[w_ptr].sess_id];
-  per_write_meta_t *w_meta = &p_ops->w_meta[w_ptr];
-
-  // for each missing id
-  if (ENABLE_ASSERTIONS) {
-    check_state_with_allowed_flags(4, w_meta->w_state, READY_PUT, READY_RELEASE, READY_COMMIT);
-    assert(w_meta->acks_seen >= REMOTE_QUORUM);
-    assert(w_meta->acks_seen < w_meta->acks_expected);
-    uint8_t dbg = 0;
-    for (uint8_t j = 0; j < w_meta->acks_expected; j++) {
-      if (!w_meta->seen_expected[j]) dbg++;
-    }
-    if (w_meta->acks_expected - w_meta->acks_seen != dbg){
-      printf("Acks expected %u, acks_seen %u dbg %u \n",
-             w_meta->acks_expected, w_meta->acks_seen, dbg);
-      for (uint8_t j = 0; j < w_meta->acks_expected; j++) {
-        printf("seen expected %u, %d \n", j, w_meta->seen_expected[j]);
-      }
-      //assert(false);
-    }
-  }
-  uint8_t missing_id_num = w_meta->acks_expected - w_meta->acks_seen;
-//  printf("Wrkr %u, write at ptr %u, state %u , expected acks %u seen acks %u \n",
-//          t_id, w_ptr, w_meta->w_state, w_meta->acks_expected, w_meta->acks_seen);
-  uint8_t expected_id_pos = 0;
-  for (uint8_t i = 0; i < missing_id_num; i++) {
-    // find the id
-    uint8_t missing_id = MACHINE_NUM;
-    for (uint8_t j = expected_id_pos; j < w_meta->acks_expected; j++) {
-      if (!w_meta->seen_expected[j]) {
-        missing_id = w_meta->expected_ids[j];
-        //my_printf(yellow, "Write missed an ack from %u \n", missing_id);
-        expected_id_pos = (uint8_t) (j + 1);
-        break;
-      }
-    }
-    if (ENABLE_ASSERTIONS) assert(missing_id < MACHINE_NUM);
-    // having found which machine did not ack try to add it to the sess_info
-    bool found_same_id = false;
-    for (uint8_t j = 0; j < sess_info->missing_num; j++) {
-      if (sess_info->missing_ids[j] == missing_id)
-        found_same_id = true;
-    }
-
-    if (!found_same_id) {
-      sess_info->missing_ids[sess_info->missing_num] = missing_id;
-      sess_info->missing_num++;
-    }
-  }
-
-  //
-  if (ENABLE_ASSERTIONS) assert(sess_info->live_writes > 0);
-  sess_info->live_writes--;
-//  printf("Removing a partially acked %u \n", sess_info->live_writes);
-  if (sess_info->live_writes == 0) {
-    //printf("Wrkr %u last w_ptr %u , current w_ptr %u\n", t_id, sess_info->last_w_ptr, w_ptr);
-    sess_info->ready_to_release = true;
-  }
-}
-
-
-static inline void reset_sess_info_on_release(sess_info_t *sess_info,
-                                              quorum_info_t *q_info, uint16_t t_id)
-{
-  if (TURN_OFF_KITE) return;
-  sess_info->missing_num = q_info->missing_num;
-  memcpy(sess_info->missing_ids, q_info->missing_ids, q_info->missing_num);
-  if (ENABLE_ASSERTIONS) {
-    assert(sess_info->stalled);
-    assert(sess_info->live_writes == 0);
-  }
-  add_request_to_sess_info(sess_info, t_id);
-}
-
-static inline void reset_sess_info_on_accept(sess_info_t *sess_info,
-                                             uint16_t t_id)
-{
-  if (!ACCEPT_IS_RELEASE || TURN_OFF_KITE) return;
-  sess_info->missing_num = 0;
-  if (ENABLE_ASSERTIONS) {
-    assert(sess_info->stalled);
-    assert(sess_info->live_writes == 0);
-    assert(sess_info->ready_to_release);
-  }
-}
+static inline void create_prop_rep(cp_prop_t *,
+                                   cp_prop_rep_t *,
+                                   mica_op_t *,
+                                   uint16_t t_id;
 
 
 /* ---------------------------------------------------------------------------
@@ -207,8 +36,10 @@ static inline void reset_sess_info_on_accept(sess_info_t *sess_info,
 //---------------------------------------------------------------------------*/
 
 static inline void fill_prop(cp_prop_t *prop,
-                             loc_entry_t *loc_entry)
+                             loc_entry_t *loc_entry,
+                             uint16_t t_id)
 {
+  check_loc_entry_metadata_is_reset(loc_entry, "insert_prop_to_read_fifo", t_id);
   assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
   memcpy(&prop->key, (void *)&loc_entry->key, KEY_SIZE);
   prop->opcode = PROPOSE_OP;
@@ -233,7 +64,7 @@ static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
   cp_prop_t *prop = (cp_prop_t *) prop_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
 
-  fill_prop(prop, loc_entry);
+  fill_prop(prop, loc_entry, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) get_fifo_push_slot(send_fifo);
@@ -244,6 +75,7 @@ static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
     p_ops->inserted_prop_id[ctx->m_id]++;
   }
 }
+
 
 static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
                                              void *source, uint32_t op_i)
@@ -256,16 +88,17 @@ static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
 
 
   cp_prop_rep_t *prop_rep = (cp_prop_rep_t *) prop_rep_ptr;
-  fill_prop_rep(prop, prop_rep, mica_op_t *(source), ctx->t_id);
+  create_prop_rep(prop, prop_rep, (mica_op_t *) source, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-  // TODO
-  slot_meta->byte_size += (new_size - PROP_REP_SMALL_SIZE);
+  uint16_t prop_rep_size = get_size_from_opcode(prop_rep->opcode) - PROP_REP_SMALL_SIZE;
+  slot_meta->byte_size += prop_rep_size;
 
-  cp_prop_rep_mes_t *prop_rep_mes = (cp_prop_rep_mes_t *) get_fifo_push_slot(send_fifo);
+  cp_rmw_rep_mes_t *prop_rep_mes = (cp_rmw_rep_mes_t *) get_fifo_push_slot(send_fifo);
   if (slot_meta->coalesce_num == 1) {
     prop_rep_mes->l_id = ptrs_to_prop->ptr_to_mes[op_i]->l_id;
     slot_meta->rm_id = ptrs_to_prop->ptr_to_mes[op_i]->m_id;
+    prop_rep_mes->opcode = PROP_REPLY; //TODO remove the opcode field
   }
 
 }
@@ -273,88 +106,7 @@ static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
 
 
 
-/*-------------READS/PROPOSES------------- */
 
-// Returns the capacity of a read request given an opcode -- Proposes, reads, acquires
-static inline uint16_t get_read_size_from_opcode(uint8_t opcode) {
-  check_state_with_allowed_flags(9, opcode, OP_RELEASE, OP_ACQUIRE, KVS_OP_PUT,
-                                 KVS_OP_GET, OP_ACQUIRE_FLIP_BIT, OP_GET_TS,
-                                 PROPOSE_OP, OP_ACQUIRE_FP);
-  switch(opcode) {
-    case OP_RELEASE:
-    case OP_ACQUIRE:
-    case KVS_OP_PUT:
-    case KVS_OP_GET:
-    case OP_ACQUIRE_FLIP_BIT:
-    case OP_GET_TS:
-    case OP_ACQUIRE_FP:
-      return R_SIZE;
-    case PROPOSE_OP:
-      return PROP_SIZE;
-    default: if (ENABLE_ASSERTIONS) assert(false);
-  }
-}
-
-
-// Set up a fresh read message to coalesce requests -- Proposes, reads, acquires
-static inline void reset_read_message(p_ops_t *p_ops)
-{
-  MOD_INCR(p_ops->r_fifo->push_ptr, PROP_FIFO_SIZE);
-  uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
-  struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_ptr];
-  r_mes_info_t * info = &p_ops->r_fifo->info[r_mes_ptr];
-
-  r_mes->l_id = 0;
-  r_mes->coalesce_num = 0;
-  info->message_size = (uint16_t) PROP_MES_HEADER;
-  info->max_rep_message_size = 0;
-  info->reads_num = 0;
-}
-
-
-// Returns a pointer, where the next request can be created -- Proposes, reads, acquires
-static inline void* get_r_ptr(p_ops_t *p_ops, uint8_t opcode,
-                              bool is_get_ts, uint16_t t_id)
-{
-  bool is_propose = opcode == PROPOSE_OP;
-  uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
-  r_mes_info_t *info = &p_ops->r_fifo->info[r_mes_ptr];
-  uint16_t new_size = get_read_size_from_opcode(opcode);
-  info->max_rep_message_size += PROP_REP_ACCEPTED_SIZE;
-
-
-
-  bool new_message_because_of_r_rep = info->max_rep_message_size > MTU;
-  bool new_message = (info->message_size + new_size) > PROP_SEND_SIZE ||
-                     new_message_because_of_r_rep;
-
-  if (new_message) {
-    reset_read_message(p_ops);
-  }
-
-  r_mes_ptr = p_ops->r_fifo->push_ptr;
-  info = &p_ops->r_fifo->info[r_mes_ptr];
-  struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_ptr];
-
-  // Set up the backwards pointers to be able to change
-  // the state of requests, after broadcasting
-  if (!is_propose) {
-    if (info->reads_num == 0) {
-      info->backward_ptr = p_ops->r_push_ptr;
-      r_mes->l_id = (uint64_t) (p_ops->local_r_id + p_ops->r_size);
-    }
-    info->reads_num++;
-  }
-  r_mes->coalesce_num++;
-
-  uint32_t inside_r_ptr = info->message_size;
-  info->message_size += new_size;
-  if (ENABLE_ASSERTIONS) {
-    assert(info->message_size <= PROP_SEND_SIZE);
-    assert(info->max_rep_message_size <= MTU);
-  }
-  return (void *) (((void *)r_mes) + inside_r_ptr);
-}
 
 
 /*-------------WRITES/ACCEPTS/COMMITS------------- */
@@ -647,267 +399,9 @@ static inline void write_bookkeeping_in_insertion_based_on_source
 
 
 
-
-/*-------------R_REPS------------- */
-
-// setup a new r_rep entry
-static inline void set_up_r_rep_entry(struct r_rep_fifo *r_rep_fifo, uint8_t rem_m_id, uint64_t l_id,
-                                      uint8_t read_opcode, bool is_rmw)
-{
-  MOD_INCR(r_rep_fifo->push_ptr, R_REP_FIFO_SIZE);
-  uint32_t r_rep_mes_ptr = r_rep_fifo->push_ptr;
-  struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[r_rep_mes_ptr];
-  r_rep_mes->coalesce_num = 0;
-  r_rep_fifo->mes_size++;
-  if (read_opcode == PROPOSE_OP) r_rep_mes->opcode = PROP_REPLY;
-  else if (read_opcode == ACCEPT_OP) r_rep_mes->opcode = ACCEPT_REPLY;
-  else if (read_opcode == ACCEPT_OP_NO_CREDITS) r_rep_mes->opcode = ACCEPT_REPLY_NO_CREDITS;
-  else {
-    r_rep_mes->opcode = READ_REPLY;
-    r_rep_mes->l_id = l_id;
-  }
-
-  r_rep_fifo->rem_m_id[r_rep_mes_ptr] = rem_m_id;
-  r_rep_fifo->message_sizes[r_rep_mes_ptr] = PROP_REP_MES_HEADER; // ok for rmws
-}
-
-// Get a pointer to the read reply that will be sent, typically before going to the kvs,
-// such that the kvs value, can be copied directly to the reply
-static inline struct r_rep_big* get_r_rep_ptr(p_ops_t *p_ops, uint64_t l_id,
-                                              uint8_t rem_m_id, uint8_t read_opcode, bool coalesce,
-                                              uint16_t t_id)
-{
-  check_state_with_allowed_flags(9, read_opcode, KVS_OP_GET, OP_ACQUIRE, OP_ACQUIRE_FLIP_BIT,
-                                 PROPOSE_OP, ACCEPT_OP, ACCEPT_OP_NO_CREDITS, OP_ACQUIRE_FP, OP_GET_TS);
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-  //struct r_rep_message *r_rep_mes = r_rep_fifo->r_rep_message;
-  bool is_propose = read_opcode == PROPOSE_OP,
-    is_accept = read_opcode == ACCEPT_OP || read_opcode == ACCEPT_OP_NO_CREDITS;
-  bool is_rmw = (is_propose || is_accept);
-  bool is_read_rep = !is_rmw;
-  //bool current_message_is_r_rep = r_rep_mes[r_rep_fifo->w_push_ptr].opcode == READ_REPLY;
-  /* A reply message corresponds to exactly one read message
-  * to avoid reasoning about l_ids, credits and so on */
-
-  if (!coalesce){
-    set_up_r_rep_entry(r_rep_fifo, rem_m_id, l_id, read_opcode, is_rmw);
-    //my_printf(cyan, "Wrkr %u Creating a new read_reply message opcode: %u/%u at w_push_ptr %u\n",
-    //           t_id, r_rep_mes[r_rep_fifo->w_push_ptr].opcode, read_opcode, r_rep_fifo->w_push_ptr);
-  }
-  uint32_t r_rep_mes_ptr = r_rep_fifo->push_ptr;
-  struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[r_rep_mes_ptr];
-  if (coalesce) {
-    if (is_read_rep && r_rep_mes->opcode == PROP_REPLY) {
-      r_rep_mes->opcode = READ_PROP_REPLY;
-      r_rep_mes->l_id = l_id;
-    }
-    else if (is_propose && r_rep_mes->opcode == READ_REPLY)
-      r_rep_mes->opcode = READ_PROP_REPLY;
-  }
-
-  if (ENABLE_ASSERTIONS) {
-    if (is_read_rep)
-      check_state_with_allowed_flags(3, r_rep_mes->opcode, READ_REPLY, READ_PROP_REPLY);
-  }
-
-  uint32_t inside_r_rep_ptr = r_rep_fifo->message_sizes[r_rep_fifo->push_ptr]; // This pointer is in bytes
-
-  if (!is_rmw) r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] += R_REP_SMALL_SIZE;
-  if (ENABLE_ASSERTIONS) assert(r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-  return (struct r_rep_big *) (((void *)r_rep_mes) + inside_r_rep_ptr);
-}
-
-//After filling the read reply do the final required bookkeeping
-static inline void finish_r_rep_bookkeeping(p_ops_t *p_ops, struct r_rep_big *rep,
-                                            bool false_pos, uint8_t rem_m_id, uint16_t t_id)
-{
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-  uint32_t r_rep_mes_ptr = r_rep_fifo->push_ptr;
-  struct r_rep_message *r_rep_mes = (struct r_rep_message *) &r_rep_fifo->r_rep_message[r_rep_mes_ptr];
-
-  if (false_pos) {
-    if (DEBUG_QUORUM)
-      my_printf(yellow, "Worker %u Letting machine %u know that I believed it failed \n", t_id, rem_m_id);
-    rep->opcode += FALSE_POSITIVE_OFFSET;
-  }
-  p_ops->r_rep_fifo->total_size++;
-  r_rep_mes->coalesce_num++;
-  if (ENABLE_ASSERTIONS) {
-    assert(r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-    assert(r_rep_mes->coalesce_num <= MAX_REPS_IN_REP);
-  }
-}
-
-// This function sets the capacity and the opcode of a red reply, for reads/acquires and Read TS
-// The locally stored TS is copied in the r_rep
-static inline void set_up_r_rep_message_size(p_ops_t *p_ops,
-                                             struct r_rep_big *r_rep,
-                                             struct network_ts_tuple *remote_ts,
-                                             bool read_ts,
-                                             uint16_t t_id)
-{
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-  compare_t ts_comp = compare_netw_ts(&r_rep->base_ts, remote_ts);
-  if (machine_id == 0 && R_TO_W_DEBUG) {
-    if (ts_comp == EQUAL)
-      my_printf(green, "L/R:  m_id: %u/%u version %u/%u \n", r_rep->base_ts.m_id, remote_ts->m_id,
-                r_rep->base_ts.version, remote_ts->version);
-    else
-      my_printf(red, "L/R:  m_id: %u/%u version %u/%u \n", r_rep->base_ts.m_id, remote_ts->m_id,
-                r_rep->base_ts.version, remote_ts->version);
-  }
-  switch (ts_comp) {
-    case SMALLER: // local is smaller than remote
-      //if (DEBUG_TS) printf("Read TS is smaller \n");
-      r_rep->opcode = TS_TOO_HIGH;
-      break;
-    case EQUAL:
-      //if (DEBUG_TS) /printf("Read TS are equal \n");
-      r_rep->opcode = TS_EQUAL;
-      break;
-    case GREATER: // local is greater than remote
-      //This does not need the value, as it is going to do a write eventually
-      r_rep->opcode = TS_TOO_SMALL;
-      r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] += (R_REP_ONLY_TS_SIZE - R_REP_SMALL_SIZE);
-      break;
-    default:
-      if (ENABLE_ASSERTIONS) assert(false);
-  }
-
-  if (ENABLE_ASSERTIONS) assert(r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-}
-
-//
-static inline void set_up_rmw_acq_rep_message_size(p_ops_t *p_ops,
-                                                   uint8_t opcode, uint16_t t_id)
-{
-  struct r_rep_fifo *r_rep_fifo = p_ops->r_rep_fifo;
-
-  check_state_with_allowed_flags(7, opcode, CARTS_TOO_SMALL, CARTS_TOO_HIGH, CARTS_EQUAL,
-                                 CARTS_TOO_SMALL + FALSE_POSITIVE_OFFSET,
-                                 CARTS_TOO_HIGH + FALSE_POSITIVE_OFFSET,
-                                 CARTS_EQUAL + FALSE_POSITIVE_OFFSET);
-
-  if (opcode == CARTS_TOO_SMALL) {
-    r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] += (ACQ_REP_SIZE - R_REP_SMALL_SIZE);
-  }
-
-
-  if (ENABLE_ASSERTIONS) assert(r_rep_fifo->message_sizes[r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-}
-
 /* ---------------------------------------------------------------------------
 //------------------------------INSERTS-TO-MESSAGE_FIFOS----------------------
 //---------------------------------------------------------------------------*/
-
-// RMWs hijack the read fifo, to send propose broadcasts to all
-static inline void insert_prop_to_read_fifo(p_ops_t *p_ops,
-                                            loc_entry_t *loc_entry,
-                                            uint16_t t_id)
-{
-  if (loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED &&
-      loc_entry->helping_flag != PROPOSE_LOCALLY_ACCEPTED)
-    check_loc_entry_metadata_is_reset(loc_entry, "insert_prop_to_read_fifo", t_id);
-  struct propose *prop = (struct propose*) get_r_ptr(p_ops, PROPOSE_OP, false, t_id);
-  uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
-  struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_ptr];
-  if (DEBUG_RMW)
-    my_printf(green, "Worker: %u, inserting an rmw in r_mes_ptr %u and inside ptr %u \n",
-              t_id, r_mes_ptr, r_mes->coalesce_num);
-//  struct propose *prop = &p_mes->prop[inside_r_ptr];
-  assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
-
-  memcpy(&prop->key, (void *)&loc_entry->key, KEY_SIZE);
-  prop->opcode = PROPOSE_OP;
-  prop->l_id = loc_entry->l_id;
-  prop->t_rmw_id = loc_entry->rmw_id.id;
-  prop->log_no = loc_entry->log_no;
-
-  if (!loc_entry->base_ts_found)
-    prop->base_ts = loc_entry->base_ts;
-  else prop->base_ts.version = DO_NOT_CHECK_BASE_TS;
-
-  // Query the conf to see if the machine has lost messages
-  on_starting_an_acquire_query_the_conf(t_id, loc_entry->epoch_id);
-  p_ops->r_fifo->bcast_size++;
-
-  if (ENABLE_ASSERTIONS) {
-    assert(prop->ts.version >= PAXOS_TS);
-    //check_version(prop->base_ts.version, "insert_prop_to_read_fifo");
-    assert(r_mes->coalesce_num > 0);
-    assert(r_mes->m_id == (uint8_t) machine_id);
-  }
-  if (ENABLE_STAT_COUNTING) t_stats[t_id].proposes_sent++;
-}
-
-
-// Worker inserts a new local read to the read fifo it maintains -- Typically for Acquire
-// but can also be the first round of an out-of-epoch write/release or an out-of-epoch read-- BUT NOT A PROPOSE!
-static inline void insert_read(p_ops_t *p_ops, trace_op_t *op,
-                               uint8_t source, uint16_t t_id)
-{
-  check_state_with_allowed_flags(3, source, FROM_TRACE, FROM_ACQUIRE);
-  const uint32_t r_ptr = p_ops->r_push_ptr;
-  r_info_t *r_info = &p_ops->read_info[r_ptr];
-  uint8_t opcode = r_info->opcode;
-  bool is_get_ts = source == FROM_TRACE && (opcode == OP_RELEASE || opcode == KVS_OP_PUT);
-
-  struct read *read = (struct read*) get_r_ptr(p_ops, opcode, is_get_ts, t_id);
-
-  // this means that the purpose of the read is solely to flip remote bits
-  if (source == FROM_ACQUIRE) {
-    // overload the key with local_r_id
-    memcpy(&read->key, (void *) &p_ops->local_r_id, KEY_SIZE);
-    read->opcode = OP_ACQUIRE_FLIP_BIT;
-    if (ENABLE_ASSERTIONS) assert(opcode == OP_ACQUIRE_FLIP_BIT);
-    if (DEBUG_BIT_VECS)
-      my_printf(cyan, "Wrkr: %u Acquire generates a read with op %u and key %u \n",
-                t_id, read->opcode, *(uint64_t *)&read->key);
-  }
-  else { // FROM TRACE: out of epoch reads/writes, acquires and releases
-    assign_ts_to_netw_ts(&read->ts, &r_info->ts_to_read);
-    read->log_no = r_info->log_no;
-    read->key = r_info->key;
-    if (!TURN_OFF_KITE)
-      r_info->epoch_id = (uint64_t) atomic_load_explicit(&epoch_id, memory_order_seq_cst);
-    read->opcode = is_get_ts ? (uint8_t) OP_GET_TS : opcode;
-  }
-
-  uint32_t r_mes_ptr = p_ops->r_fifo->push_ptr;
-  struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[r_mes_ptr];
-
-  if (DEBUG_READS)
-    my_printf(green, "Worker: %u, inserting a read in r_mes_ptr %u and inside ptr %u opcode %u \n",
-              t_id, r_mes_ptr, r_mes->coalesce_num, read->opcode);
-  check_read_state_and_key(p_ops, r_ptr, source, r_mes, r_info, r_mes_ptr, read, t_id);
-
-  //my_printf(green, "%u r_ptr becomes valid, capacity %u/%u \n", r_ptr, p_ops->r_size, p_ops->virt_r_size);
-  p_ops->r_state[r_ptr] = VALID;
-  if (source == FROM_TRACE) {
-    p_ops->r_session_id[r_ptr] = op->session_id;
-    if (ENABLE_CLIENTS) {
-      p_ops->r_index_to_req_array[r_ptr] = op->index_to_req_array;
-    }
-    // Query the conf to see if the machine has lost messages
-    if (opcode == OP_ACQUIRE)
-      on_starting_an_acquire_query_the_conf(t_id, r_info->epoch_id);
-  }
-
-  // Increase the virtual capacity by 2 if the req is an acquire
-  p_ops->virt_r_size+= opcode == OP_ACQUIRE ? 2 : 1;
-  p_ops->r_size++;
-  p_ops->r_fifo->bcast_size++;
-
-  check_read_fifo_metadata(p_ops, r_mes, t_id);
-  MOD_INCR(p_ops->r_push_ptr, PENDING_READS);
-
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[t_id].reads_sent++;
-    if (r_mes->coalesce_num == 1) t_stats[t_id].reads_sent_mes_num++;
-  }
-
-}
-
 
 // Insert accepts to the write message fifo
 static inline void insert_accept_in_writes_message_fifo(p_ops_t *p_ops,
@@ -1001,34 +495,6 @@ static inline void insert_write(p_ops_t *p_ops, trace_op_t *op, const uint8_t so
   MOD_INCR(p_ops->w_push_ptr, PENDING_WRITES);
 }
 
-
-// Insert a new r_rep to the r_rep reply fifo: used only for OP_ACQIUIRE_FLIP_BIT
-// i.e. the message spawned by acquires that detected a false positive, meant to merely flip the owned bit
-static inline void insert_r_rep(p_ops_t *p_ops, uint64_t l_id, uint16_t t_id,
-                                uint8_t rem_m_id, bool coalesce,  uint8_t read_opcode)
-{
-  check_state_with_allowed_flags(2, read_opcode, OP_ACQUIRE_FLIP_BIT);
-  struct r_rep_big *r_rep = get_r_rep_ptr(p_ops, l_id, rem_m_id, read_opcode, coalesce, t_id);
-  r_rep->opcode = TS_EQUAL;
-  finish_r_rep_bookkeeping(p_ops, r_rep, false, rem_m_id, t_id);
-}
-
-static inline void check_dbg_counter(context_t *ctx,
-                                     uint16_t writes_num,
-                                     uint16_t reads_num)
-{
-  if (ENABLE_ASSERTIONS) {
-    p_ops_t* p_ops = (p_ops_t*) ctx->appl_ctx;
-
-    p_ops->debug_loop->sizes_dbg_cntr++;
-    if (p_ops->debug_loop->sizes_dbg_cntr == M_32) {
-      p_ops->debug_loop->sizes_dbg_cntr = 0;
-      printf("Wrkr %u breaking due to max allowed capacity r_size %u/%d w_size %u/%u \n",
-             ctx->t_id, p_ops->virt_r_size + reads_num, MAX_ALLOWED_R_SIZE,
-             p_ops->virt_w_size + writes_num, MAX_ALLOWED_W_SIZE);
-    }
-  }
-}
 
 // Fill the trace_op to be passed to the KVS. Returns whether no more requests can be processed
 static inline bool fill_trace_op(context_t *ctx,

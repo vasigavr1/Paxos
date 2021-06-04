@@ -30,8 +30,9 @@
 #define MAX_RECV_PROP_WRS ((PROP_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
 #define MAX_INCOMING_PROP (MAX_RECV_PROP_WRS * PROP_COALESCE)
 
-// TODO is l_id needed ?
-#define PROP_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1
+//
+#define MAX_PROP_REP_WRS (PROP_CREDITS * REM_MACH_NUM)
+#define PROP_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1 TODO remove opcode
 // PROPOSE REPLIES
 #define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
 #define PROP_REP_SMALL_SIZE 9 // lid and opcode
@@ -39,6 +40,11 @@
 #define PROP_REP_BASE_TS_STALE_SIZE (9 + TS_TUPLE_SIZE + RMW_VALUE_SIZE)
 #define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //with the base_ts
 #define PROP_REP_MES_SIZE (PROP_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
+#define MAX_RECV_PROP_REP_WRS ((REM_MACH_NUM * PROP_CREDITS))
+#define PROP_REP_RECV_SIZE (GRH_SIZE + PROP_REP_MES_SIZE)
+#define PROP_REP_FIFO_SIZE (MAX_INCOMING_PROP)
+
+
 // ACCEPT REPLIES
 #define ACC_REP_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
 #define ACC_REP_SMALL_SIZE 9 // lid and opcode
@@ -89,13 +95,6 @@
 #define MAX_INCOMING_W (MAX_RECV_W_WRS * MAX_WRITE_COALESCE)
 
 
-
-
-
-
-
-
-
 // COMBINE Reads, Acquires, RMW-acquires, Accepts , Propose
 #define MAX_R_REP_MES_SIZE MAX_OF_4(READ_TS_REP_MES_SIZE, ACQ_REP_MES_SIZE, PROP_REP_MES_SIZE, ACC_REP_MES_SIZE)
 #define R_REP_SEND_SIZE MIN(MAX_R_REP_MES_SIZE, MTU)
@@ -110,10 +109,10 @@
 #define R_REP_SLOTS_FOR_ACCEPTS (W_CREDITS * REM_MACH_NUM * SESSIONS_PER_THREAD) // the maximum number of accept-related read replies
 #define MAX_RECV_R_REP_WRS ((REM_MACH_NUM * PROP_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
 #define R_REP_WRS_WITHOUT_ACCEPTS (PROP_CREDITS * REM_MACH_NUM)
-#define MAX_R_REP_WRS (R_REP_WRS_WITHOUT_ACCEPTS + R_REP_SLOTS_FOR_ACCEPTS)
+
 
 #define R_REP_ENABLE_INLINING ((R_REP_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
-#define R_REP_FIFO_SIZE (MAX_INCOMING_PROP + R_REP_SLOTS_FOR_ACCEPTS)
+
 
 // Acks
 #define MAX_RECV_ACK_WRS (REM_MACH_NUM * W_CREDITS)
@@ -182,7 +181,7 @@ struct read {
   uint32_t log_no;
 } __attribute__((__packed__));
 
-//
+// PROPOSES
 typedef struct propose {
   struct network_ts_tuple ts;
   uint8_t opcode;
@@ -195,10 +194,6 @@ typedef struct propose {
   ts_tuple_t base_ts;
 } __attribute__((__packed__)) cp_prop_t;
 
-
-
-/*------- HEADERS---------------------- */
-
 typedef struct cp_prop_mes {
   uint64_t l_id;
   uint8_t coalesce_num;
@@ -210,6 +205,33 @@ typedef struct cp_prop_message_ud_req {
   uint8_t grh[GRH_SIZE];
   cp_prop_mes_t prop_mes;
 } cp_prop_mes_ud_t;
+
+/// PROP REPS
+typedef struct rmw_rep_last_committed {
+  uint8_t opcode;
+  uint64_t l_id; // the l_id of the rmw local_entry
+  struct network_ts_tuple ts; // This is the base for RMW-already-committed or Log-to-low, it's proposed/accepted ts for the rest
+  uint8_t value[RMW_VALUE_SIZE];
+  uint64_t rmw_id; //accepted  OR last committed
+  uint32_t log_no_or_base_version; // log no for RMW-already-committed/Log-too-low, base_ts.version for proposed/accepted
+  uint8_t base_m_id; // base_ts.m_id used for accepts only
+} __attribute__((__packed__)) cp_prop_rep_t;
+
+
+typedef struct rmw_rep_message {
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  uint8_t opcode;
+  uint64_t l_id ;
+  cp_prop_rep_t rmw_rep[PROP_COALESCE];
+}__attribute__((__packed__)) cp_rmw_rep_mes_t;
+
+typedef struct cp_prop_rep_message_ud_req {
+  uint8_t grh[GRH_SIZE];
+  cp_prop_mes_t prop_rep_mes;
+} cp_prop_rep_mes_ud_t;
+
+
 
 typedef struct w_message {
   uint64_t l_id;
@@ -276,24 +298,7 @@ struct r_rep_big {
 // Reply for both accepts and proposes
 // Reply with the last committed RMW if the
 // proposal/accept had a low log number or has already been committed
-typedef struct rmw_rep_last_committed {
-  uint8_t opcode;
-  uint64_t l_id; // the l_id of the rmw local_entry
-  struct network_ts_tuple ts; // This is the base for RMW-already-committed or Log-to-low, it's proposed/accepted ts for the rest
-  uint8_t value[RMW_VALUE_SIZE];
-  uint64_t rmw_id; //accepted  OR last committed
-  uint32_t log_no_or_base_version; // log no for RMW-already-committed/Log-too-low, base_ts.version for proposed/accepted
-  uint8_t base_m_id; // base_ts.m_id used for accepts only
-} __attribute__((__packed__)) cp_prop_rep_t;
 
-//
-typedef struct rmw_rep_message {
-  uint8_t coalesce_num;
-  uint8_t m_id;
-  uint8_t opcode;
-  uint64_t l_id ;
-  cp_prop_rep_t rmw_rep[PROP_COALESCE];
-}__attribute__((__packed__)) cp_prop_rep_mes_t;
 
 
 

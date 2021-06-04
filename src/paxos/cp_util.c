@@ -244,6 +244,8 @@ void cp_qp_meta_mfs(context_t *ctx)
 
 
   mfs[PROP_REP_QP_ID].insert_helper = cp_insert_prop_rep_helper;
+  mfs[PROP_REP_QP_ID].send_helper = cp_prop_rep_helper;
+  mfs[PROP_REP_QP_ID].recv_handler = cp_prop_rep_recv_handler;
 
   ctx_set_qp_meta_mfs(ctx, mfs);
   free(mfs);
@@ -261,6 +263,15 @@ void cp_init_qp_meta(context_t *ctx)
                      PROP_CREDITS, PROP_MES_HEADER,
                      "send props", "recv props");
 
+  create_per_qp_meta(&qp_meta[PROP_REP_QP_ID], MAX_PROP_REP_WRS,
+                     MAX_RECV_PROP_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
+                     PROP_QP_ID,
+                     REM_MACH_NUM, REM_MACH_NUM, PROP_REP_BUF_SLOTS,
+                     PROP_REP_RECV_SIZE, PROP_REP_MES_SIZE, false, false,
+                     0, 0, PROP_REP_FIFO_SIZE,
+                     0, PROP_REP_MES_HEADER,
+                     "send prop_reps", "recv prop_reps");
+
   ///
   create_per_qp_meta(&qp_meta[W_QP_ID], MAX_W_WRS,
                      MAX_RECV_W_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
@@ -271,14 +282,7 @@ void cp_init_qp_meta(context_t *ctx)
                      W_CREDITS, W_MES_HEADER,
                      "send writes", "recv writes");
   ///
-  create_per_qp_meta(&qp_meta[PROP_REP_QP_ID], MAX_R_REP_WRS,
-                     MAX_RECV_R_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
-                     PROP_QP_ID,
-                     REM_MACH_NUM, REM_MACH_NUM, R_REP_BUF_SLOTS,
-                     R_REP_RECV_SIZE, R_REP_SEND_SIZE, false, false,
-                     0, 0, R_REP_FIFO_SIZE,
-                     0, PROP_REP_MES_HEADER,
-                     "send r_reps", "recv r_reps");
+
   ///
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
                      W_QP_ID, REM_MACH_NUM,
