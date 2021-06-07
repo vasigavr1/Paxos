@@ -23,6 +23,7 @@ void cp_stats(stats_ctx_t *ctx);
 #define ACC_CREDITS PROP_CREDITS
 #define PROP_COALESCE 10
 #define ACC_COALESCE PROP_COALESCE
+#define MAX_COALESCE MAX(PROP_COALESCE, ACC_COALESCE)
 
 
 #define W_CREDITS 8

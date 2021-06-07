@@ -123,7 +123,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
         // in addition we do this before inspecting, so that if we broadcast accepts, they have a fresh l_id
         loc_entry->rmw_reps.inspected = true;
         advance_loc_entry_l_id(loc_entry, t_id);
-        inspect_proposes(p_ops, loc_entry, t_id);
+        inspect_proposes(ctx, loc_entry, t_id);
         check_state_with_allowed_flags(7, (int) loc_entry->state, INVALID_RMW, RETRY_WITH_BIGGER_TS,
                                        NEEDS_KV_PTR, ACCEPTED, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
         if (ENABLE_ASSERTIONS) assert(!loc_entry->rmw_reps.ready_to_inspect);
@@ -183,70 +183,9 @@ static inline void send_props_helper(context_t *ctx)
   send_prop_checks(ctx);
 }
 
-// Broadcast Writes
-static inline void broadcast_writes(context_t *ctx)
+static inline void send_accs_helper(context_t *ctx)
 {
-  //printf("Worker %d bcasting writes \n", t_id);
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
-  per_qp_meta_t *ack_qp_meta = &ctx->qp_meta[ACK_QP_ID];
-  per_qp_meta_t *r_rep_qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
-
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  uint16_t br_i = 0, mes_sent = 0, available_credits = 0;
-  uint32_t bcast_pull_ptr = p_ops->w_fifo->bcast_pull_ptr;
-  if (p_ops->w_fifo->bcast_size == 0) return;
-  if (release_not_ready(p_ops, &p_ops->w_fifo->info[bcast_pull_ptr], (w_mes_t *)
-    &p_ops->w_fifo->w_message[bcast_pull_ptr], ctx->t_id))
-    return;
-
-  if (!check_bcast_credits(qp_meta->credits, ctx->q_info,
-                           &qp_meta->time_out_cnt,
-                           &available_credits, 1,
-                           ctx->t_id)) return;
-  if (ENABLE_ASSERTIONS) assert(available_credits <= W_CREDITS);
-
-  while (p_ops->w_fifo->bcast_size > 0 && mes_sent < available_credits) {
-    if (mes_sent >  0 &&
-      release_not_ready(p_ops, &p_ops->w_fifo->info[bcast_pull_ptr], (struct w_message *)
-        &p_ops->w_fifo->w_message[bcast_pull_ptr], ctx->t_id)) {
-      break;
-    }
-    if (DEBUG_WRITES)
-      printf("Wrkr %d has %u write bcasts to send credits %d\n", ctx->t_id, p_ops->w_fifo->bcast_size, available_credits);
-    // Create the broadcast messages
-    forge_w_wr(bcast_pull_ptr, ctx, br_i);
-    br_i++;
-    struct w_message *w_mes = (struct w_message *) &p_ops->w_fifo->w_message[bcast_pull_ptr];
-      uint8_t coalesce_num = w_mes->coalesce_num;
-    debug_and_count_stats_when_broadcasting_writes(p_ops, bcast_pull_ptr, coalesce_num,
-                                                   ctx->t_id, br_i,
-                                                   &qp_meta->outstanding_messages);
-    p_ops->w_fifo->bcast_size -= coalesce_num;
-    // This message has been sent, do not add other writes to it!
-    if (p_ops->w_fifo->bcast_size == 0) reset_write_message(p_ops);
-    mes_sent++;
-    MOD_INCR(bcast_pull_ptr, W_FIFO_SIZE);
-    if (br_i == MAX_BCAST_BATCH) {
-      post_receives_for_r_reps_for_accepts(r_rep_qp_meta->recv_info, ctx->t_id);
-      post_quorum_broadasts_and_recvs(ack_qp_meta->recv_info,
-                                      ack_qp_meta->recv_wr_num - ack_qp_meta->recv_info->posted_recvs,
-                                      ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                      qp_meta->send_qp, qp_meta->enable_inlining);
-      br_i = 0;
-    }
-  }
-  if (br_i > 0) {
-    if (ENABLE_ASSERTIONS) assert(MAX_BCAST_BATCH > 1);
-    post_receives_for_r_reps_for_accepts(r_rep_qp_meta->recv_info, ctx->t_id);
-    post_quorum_broadasts_and_recvs(ack_qp_meta->recv_info,
-                                    ack_qp_meta->recv_wr_num - ack_qp_meta->recv_info->posted_recvs,
-                                    ctx->q_info, br_i, qp_meta->sent_tx, qp_meta->send_wr,
-                                    qp_meta->send_qp, qp_meta->enable_inlining);
-  }
-
-  p_ops->w_fifo->bcast_pull_ptr = bcast_pull_ptr;
-  if (ENABLE_ASSERTIONS) assert(mes_sent <= available_credits && mes_sent <= W_CREDITS);
-  if (mes_sent > 0) decrease_credits(qp_meta->credits, ctx->q_info, mes_sent);
+  send_acc_checks(ctx);
 }
 
 
@@ -259,7 +198,12 @@ static inline void broadcast_writes(context_t *ctx)
 
 static inline void cp_prop_rep_helper(context_t *ctx)
 {
-  send_prop_rep_checks(ctx);
+  send_rmw_rep_checks(ctx, PROP_REP_QP_ID);
+}
+
+static inline void cp_acc_rep_helper(context_t *ctx)
+{
+  send_rmw_rep_checks(ctx, ACC_REP_QP_ID);
 }
 
 
@@ -278,42 +222,78 @@ static inline bool prop_recv_handler(context_t* ctx)
 
   uint8_t coalesce_num = prop_mes->coalesce_num;
 
-  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
-  if (qp_meta->polled_messages == 0) ptrs_to_prop->polled_props = 0;
+  cp_ptrs_to_ops_t *ptrs_to_prop = p_ops->ptrs_to_ops;
+  if (qp_meta->polled_messages == 0) ptrs_to_prop->polled_ops = 0;
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
     cp_prop_t *prop = &prop_mes->prop[i];
     check_state_with_allowed_flags(2, prop->opcode, PROPOSE_OP);
-    ptrs_to_prop->ptr_to_ops[ptrs_to_prop->polled_props] = (void *) prop;
-    ptrs_to_prop->ptr_to_mes[ptrs_to_prop->polled_props] = prop_mes;
-    ptrs_to_prop->break_message[ptrs_to_prop->polled_props] = i == 0;
-    ptrs_to_prop->polled_props++;
+    ptrs_to_prop->ptr_to_ops[ptrs_to_prop->polled_ops] = (void *) prop;
+    ptrs_to_prop->ptr_to_mes[ptrs_to_prop->polled_ops] = (void *) prop_mes;
+    ptrs_to_prop->break_message[ptrs_to_prop->polled_ops] = i == 0;
+    ptrs_to_prop->polled_ops++;
   }
 
   return true;
 }
 
-static inline bool cp_prop_rep_recv_handler(context_t* ctx)
+static inline bool acc_recv_handler(context_t* ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile cp_prop_rep_mes_ud_t *incoming_prop_reps =
-      (volatile cp_prop_rep_mes_ud_t *) recv_fifo->fifo;
-  cp_rmw_rep_mes_t *prop_rep_mes =
-      (cp_rmw_rep_mes_t *) &incoming_prop_reps[recv_fifo->pull_ptr].prop_rep_mes;
+  volatile cp_acc_mes_ud_t *incoming_accs = (volatile cp_acc_mes_ud_t *) recv_fifo->fifo;
+  cp_acc_mes_t *acc_mes = (cp_acc_mes_t *) &incoming_accs[recv_fifo->pull_ptr].acc_mes;
 
+  check_when_polling_for_accs(ctx, acc_mes);
 
-  bool is_accept = false;
-  handle_rmw_rep_replies(p_ops, prop_rep_mes, is_accept, ctx->t_id);
+  uint8_t coalesce_num = acc_mes->coalesce_num;
 
-  if (ENABLE_STAT_COUNTING) {
-    if (ENABLE_ASSERTIONS)
-      t_stats[ctx->t_id].per_worker_r_reps_received[prop_rep_mes->m_id] += prop_rep_mes->coalesce_num;
-    t_stats[ctx->t_id].received_r_reps += prop_rep_mes->coalesce_num;
-    t_stats[ctx->t_id].received_r_reps_mes_num++;
+  cp_ptrs_to_ops_t *ptrs_to_acc = p_ops->ptrs_to_ops;
+  if (qp_meta->polled_messages == 0) ptrs_to_acc->polled_ops = 0;
+
+  for (uint16_t i = 0; i < coalesce_num; i++) {
+    cp_acc_t *acc = &acc_mes->acc[i];
+    check_state_with_allowed_flags(2, acc->opcode, ACCEPT_OP);
+    ptrs_to_acc->ptr_to_ops[ptrs_to_acc->polled_ops] = (void *) acc;
+    ptrs_to_acc->ptr_to_mes[ptrs_to_acc->polled_ops] = (void *) acc_mes;
+    ptrs_to_acc->break_message[ptrs_to_acc->polled_ops] = i == 0;
+    ptrs_to_acc->polled_ops++;
   }
+  return true;
+}
 
+static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  volatile cp_rmw_rep_mes_ud_t *incoming_reps =
+      (volatile cp_rmw_rep_mes_ud_t *) recv_fifo->fifo;
+  cp_rmw_rep_mes_t *rep_mes =
+      (cp_rmw_rep_mes_t *) &incoming_reps[recv_fifo->pull_ptr].rep_mes;
+
+
+  bool is_accept = qp_id == ACC_QP_ID;
+  handle_rmw_rep_replies(p_ops, rep_mes, is_accept, ctx->t_id);
+
+  //if (ENABLE_STAT_COUNTING) {
+  //  if (ENABLE_ASSERTIONS)
+  //    t_stats[ctx->t_id].per_worker_r_reps_received[prop_rep_mes->m_id] += prop_rep_mes->coalesce_num;
+  //  t_stats[ctx->t_id].received_r_reps += prop_rep_mes->coalesce_num;
+  //  t_stats[ctx->t_id].received_r_reps_mes_num++;
+  //}
+}
+
+static inline bool cp_prop_rep_recv_handler(context_t* ctx)
+{
+  cp_rmw_rep_recv_handler(ctx, PROP_QP_ID);
+  return true;
+}
+
+static inline bool cp_acc_rep_recv_handler(context_t* ctx)
+{
+  cp_rmw_rep_recv_handler(ctx, ACC_QP_ID);
   return true;
 }
 
@@ -615,9 +595,13 @@ _Noreturn static void cp_main_loop(context_t *ctx)
     ctx_poll_incoming_messages(ctx, PROP_QP_ID);
     ctx_send_unicasts(ctx, PROP_REP_QP_ID);
 
+    ctx_send_broadcasts(ctx, ACC_QP_ID);
+    ctx_poll_incoming_messages(ctx, ACC_QP_ID);
+    ctx_send_unicasts(ctx, ACC_REP_QP_ID);
+
+
     broadcast_writes(ctx);
 
-    poll_for_writes(ctx, ACC_QP_ID);
 
     od_send_acks(ctx, ACK_QP_ID);
     inspect_rmws(ctx, ctx->t_id);

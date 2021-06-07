@@ -26,18 +26,24 @@ static inline void fill_commit_message_from_r_info(struct commit *com,
 
 static inline void KVS_isolated_op(int t_id, write_t *write);
 static inline void create_prop_rep(cp_prop_t *,
-                                   cp_prop_rep_t *,
+                                   cp_prop_mes_t *prop_mes,
+                                   cp_rmw_rep_t *,
                                    mica_op_t *,
-                                   uint16_t t_id;
+                                   uint16_t t_id);
+static inline void create_acc_rep(cp_acc_t *acc,
+                                  cp_acc_mes_t *acc_mes,
+                                  cp_rmw_rep_t *acc_rep,
+                                  mica_op_t *kv_ptr,
+                                  uint16_t t_id) ;
 
 
 /* ---------------------------------------------------------------------------
 //------------------------------ Inserting-utility----------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void fill_prop(cp_prop_t *prop,
-                             loc_entry_t *loc_entry,
-                             uint16_t t_id)
+static inline void cp_fill_prop(cp_prop_t *prop,
+                                loc_entry_t *loc_entry,
+                                uint16_t t_id)
 {
   check_loc_entry_metadata_is_reset(loc_entry, "insert_prop_to_read_fifo", t_id);
   assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
@@ -54,8 +60,36 @@ static inline void fill_prop(cp_prop_t *prop,
   }
 }
 
-static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
-                                    void *source, uint32_t source_flag)
+static inline void cp_fill_acc(cp_acc_t *acc,
+                               loc_entry_t *loc_entry,
+                               bool helping,
+                               uint16_t t_id)
+{
+  check_loc_entry_metadata_is_reset(loc_entry, "insert_accept_in_writes_message_fifo", t_id);
+  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED);
+  if (DEBUG_RMW) {
+    my_printf(yellow, "Wrkr %u Inserting an accept, l_id %lu, "
+                      "rmw_id %lu, log %u,  helping %u,\n",
+              t_id, loc_entry->l_id, loc_entry->rmw_id.id,
+              loc_entry->log_no, helping);
+  }
+
+  acc->l_id = loc_entry->l_id;
+  acc->t_rmw_id = loc_entry->rmw_id.id;
+  acc->base_ts = loc_entry->base_ts;
+  assign_ts_to_netw_ts(&acc->ts, &loc_entry->new_ts);
+  memcpy(&acc->key, &loc_entry->key, KEY_SIZE);
+  acc->opcode = ACCEPT_OP;
+  if (!helping && !loc_entry->rmw_is_successful)
+    memcpy(acc->value, loc_entry->value_to_read, (size_t) RMW_VALUE_SIZE);
+  else memcpy(acc->value, loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
+  acc->log_no = loc_entry->log_no;
+  acc->val_len = (uint8_t) loc_entry->rmw_val_len;
+}
+
+
+static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
+                                       void *source, uint32_t source_flag)
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
@@ -64,7 +98,7 @@ static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
   cp_prop_t *prop = (cp_prop_t *) prop_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
 
-  fill_prop(prop, loc_entry, ctx->t_id);
+  cp_fill_prop(prop, loc_entry, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) get_fifo_push_slot(send_fifo);
@@ -77,34 +111,85 @@ static inline void insert_prop_help(context_t *ctx, void* prop_ptr,
 }
 
 
-static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
-                                             void *source, uint32_t op_i)
+static inline uint64_t get_rmw_mes_l_id(void *mes, bool is_accept)
+{
+  return is_accept?
+    ((cp_acc_mes_t *) mes)->l_id :
+    ((cp_prop_mes_t *) mes)->l_id;
+}
+
+static inline uint8_t get_rmw_mes_m_id(void *mes, bool is_accept)
+{
+  return is_accept?
+         ((cp_acc_mes_t *) mes)->m_id :
+         ((cp_prop_mes_t *) mes)->m_id;
+}
+
+static inline void cp_insert_rmw_rep_helper(context_t *ctx,
+                                            cp_rmw_rep_t *rep,
+                                            mica_op_t *kv_ptr,
+                                            uint32_t op_i,
+                                            uint8_t qp_id)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
-  cp_prop_t *prop = ptrs_to_prop->ptr_to_ops[op_i];
+  cp_ptrs_to_ops_t *ptrs_to_ops = p_ops->ptrs_to_ops;
+  bool is_accept = qp_id == ACC_QP_ID;
+  void *op = ptrs_to_ops->ptr_to_ops[op_i];
+  void *mes = ptrs_to_ops->ptr_to_mes[op_i];
 
-
-  cp_prop_rep_t *prop_rep = (cp_prop_rep_t *) prop_rep_ptr;
-  create_prop_rep(prop, prop_rep, (mica_op_t *) source, ctx->t_id);
+  is_accept ? create_acc_rep(op, mes, rep, kv_ptr, ctx->t_id) :
+              create_prop_rep(op, mes, rep, kv_ptr, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
-  uint16_t prop_rep_size = get_size_from_opcode(prop_rep->opcode) - PROP_REP_SMALL_SIZE;
-  slot_meta->byte_size += prop_rep_size;
+  uint16_t rep_size = get_size_from_opcode(rep->opcode) - RMW_REP_SMALL_SIZE;
+  slot_meta->byte_size += rep_size;
 
-  cp_rmw_rep_mes_t *prop_rep_mes = (cp_rmw_rep_mes_t *) get_fifo_push_slot(send_fifo);
+  cp_rmw_rep_mes_t *rep_mes = (cp_rmw_rep_mes_t *) get_fifo_push_slot(send_fifo);
   if (slot_meta->coalesce_num == 1) {
-    prop_rep_mes->l_id = ptrs_to_prop->ptr_to_mes[op_i]->l_id;
-    slot_meta->rm_id = ptrs_to_prop->ptr_to_mes[op_i]->m_id;
-    prop_rep_mes->opcode = PROP_REPLY; //TODO remove the opcode field
+    rep_mes->l_id = get_rmw_mes_l_id(mes, is_accept);
+    slot_meta->rm_id = get_rmw_mes_m_id(mes, is_accept);
+    rep_mes->opcode = PROP_REPLY; //TODO remove the opcode field
   }
-
 }
 
 
+static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
+                                             void *source, uint32_t op_i)
+{
+  cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) prop_rep_ptr,
+                           (mica_op_t *) source, op_i, PROP_QP_ID);
+}
 
+static inline void cp_insert_acc_rep_helper(context_t *ctx, void* acc_rep_ptr,
+                                             void *source, uint32_t op_i)
+{
+  cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) acc_rep_ptr,
+                           (mica_op_t *) source, op_i, ACC_QP_ID);
+}
+
+
+static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
+                                      void *source, uint32_t source_flag)
+{
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+
+  cp_acc_t *acc = (cp_acc_t *) acc_ptr;
+  loc_entry_t *loc_entry = (loc_entry_t *) source;
+  cp_fill_acc(acc, loc_entry, (bool) source_flag, ctx->t_id);
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  cp_acc_mes_t *acc_mes = (cp_acc_mes_t *) get_fifo_push_slot(send_fifo);
+  acc_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
+
+  if (slot_meta->coalesce_num == 1) {
+    acc_mes->l_id = p_ops->inserted_acc_id[ctx->m_id];
+    p_ops->inserted_acc_id[ctx->m_id]++;
+  }
+}
 
 
 
@@ -403,42 +488,7 @@ static inline void write_bookkeeping_in_insertion_based_on_source
 //------------------------------INSERTS-TO-MESSAGE_FIFOS----------------------
 //---------------------------------------------------------------------------*/
 
-// Insert accepts to the write message fifo
-static inline void insert_accept_in_writes_message_fifo(p_ops_t *p_ops,
-                                                        loc_entry_t *loc_entry,
-                                                        bool helping,
-                                                        uint16_t t_id)
-{
-  check_loc_entry_metadata_is_reset(loc_entry, "insert_accept_in_writes_message_fifo", t_id);
-  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED);
-  if (DEBUG_RMW) {
-    my_printf(yellow, "Wrkr %u Inserting an accept, bcast capacity %u, "
-                "rmw_id %lu, fifo w_push_ptr %u, fifo pull ptr %u\n",
-              t_id, p_ops->w_fifo->bcast_size, loc_entry->rmw_id.id,
-              p_ops->w_fifo->push_ptr, p_ops->w_fifo->bcast_pull_ptr);
-  }
-  struct accept *acc = (struct accept *)
-    get_w_ptr(p_ops, ACCEPT_OP, loc_entry->sess_id, t_id);
 
-  acc->l_id = loc_entry->l_id;
-  acc->t_rmw_id = loc_entry->rmw_id.id;
-  //assign_ts_to_netw_ts(&acc->base_ts, &loc_entry->base_ts);
-  acc->base_ts = loc_entry->base_ts;
-  assign_ts_to_netw_ts(&acc->ts, &loc_entry->new_ts);
-  memcpy(&acc->key, &loc_entry->key, KEY_SIZE);
-  acc->opcode = ACCEPT_OP;
-  if (!helping && !loc_entry->rmw_is_successful)
-    memcpy(acc->value, loc_entry->value_to_read, (size_t) RMW_VALUE_SIZE);
-  else memcpy(acc->value, loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
-  acc->log_no = loc_entry->log_no;
-  acc->val_len = (uint8_t) loc_entry->rmw_val_len;
-  signal_conf_bit_flip_in_accept(loc_entry, acc, t_id);
-
-  p_ops->w_fifo->bcast_size++;
-  if (ENABLE_ASSERTIONS) {
-//    assert(acc->l_id < p_ops->prop_info->l_id);
-  }
-}
 
 
 // Insert a new local or remote write to the pending writes
@@ -789,142 +839,6 @@ static inline void clear_after_release_quorum(p_ops_t *p_ops,
 
 
 
-/*----------------------------------------------------
- * ---------------POLLING----------------------------
- * --------------------------------------------------*/
-
-// Returns true, if you should move to the next message
-static inline bool find_the_r_ptr_rep_refers_to(uint32_t *r_ptr, uint64_t l_id, uint64_t pull_lid,
-                                                p_ops_t *p_ops,
-                                                uint8_t mes_opcode, uint8_t r_rep_num, uint16_t  t_id)
-{
-  if (p_ops->r_size == 0 && mes_opcode == READ_REPLY) {
-    return true;
-  }
-  if (mes_opcode == READ_REPLY)
-    check_r_rep_l_id(l_id, r_rep_num, pull_lid, p_ops->r_size, t_id);
-
-  if (pull_lid >= l_id) {
-    if ((pull_lid - l_id) >= r_rep_num && mes_opcode == READ_REPLY) return true;
-    (*r_ptr) = p_ops->r_pull_ptr;
-  } else  // l_id > pull_lid
-    (*r_ptr) = (uint32_t) (p_ops->r_pull_ptr + (l_id - pull_lid)) % PENDING_READS;
-  return false;
-}
-
-static inline void fill_read_info_from_read_rep(struct r_rep_big *r_rep, r_info_t *read_info,
-                                                uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS && read_info->is_read) {
-    if (compare_netw_carts_with_carts(&r_rep->base_ts, r_rep->log_no,
-                                      &read_info->ts_to_read, read_info->log_no)
-        != GREATER) {
-      my_printf(red, "Rep version/m_id/log: %u/%u/%u, r_info version/m_id/logno: %u/%u/%u \n",
-                r_rep->base_ts.version, r_rep->base_ts.m_id, r_rep->log_no,
-                read_info->ts_to_read.version, read_info->ts_to_read.m_id, read_info->log_no);
-      assert(false);
-    }
-    assert(r_rep->base_ts.version >= read_info->ts_to_read.version);
-    if (r_rep->log_no == 0) assert(r_rep->rmw_id == 0);
-  }
-  if (read_info->is_read) {
-    read_info->log_no = r_rep->log_no;
-    read_info->rmw_id.id = r_rep->rmw_id;
-    memcpy(read_info->value, r_rep->value, read_info->val_len);
-  }
-  assign_netw_ts_to_ts(&read_info->ts_to_read, &r_rep->base_ts);
-
-}
-
-
-// Each read has an associated read_info structure that keeps track of the incoming replies, value, opcode etc.
-static inline void read_info_bookkeeping(struct r_rep_big *r_rep,
-                                         r_info_t *read_info, uint16_t t_id)
-{
-
-  detect_false_positives_on_read_info_bookkeeping(r_rep, read_info, t_id);
-  if (r_rep->opcode == CARTS_TOO_SMALL || r_rep->opcode == TS_TOO_SMALL) {
-    if (!read_info->seen_larger_ts) {
-      fill_read_info_from_read_rep(r_rep, read_info, t_id);
-      read_info->times_seen_ts = 1;
-      read_info->seen_larger_ts = true;
-    }
-    else { // if the read has already received a "greater" base_ts
-      compare_t compare = read_info->is_read ? compare_netw_carts_with_carts(&r_rep->base_ts, r_rep->log_no,
-                                                                                &read_info->ts_to_read, read_info->log_no) :
-                                                  compare_netw_ts_with_ts(&r_rep->base_ts, &read_info->ts_to_read);
-      if (compare == GREATER) {
-        fill_read_info_from_read_rep(r_rep, read_info, t_id);
-        read_info->times_seen_ts = 1;
-      }
-      else if (compare == EQUAL) read_info->times_seen_ts++;
-      // Nothing to do if the already stored base_ts is greater than the incoming
-    }
-  }
-  else if (r_rep->opcode == CARTS_EQUAL || r_rep->opcode == TS_EQUAL) {
-    if (!read_info->seen_larger_ts)
-      read_info->times_seen_ts++;
-  }
-  else if (r_rep->opcode == CARTS_TOO_HIGH || r_rep->opcode == TS_TOO_HIGH) {
-    // Nothing to do if the already stored base_ts is greater than the incoming
-  }
-  read_info->rep_num++;
-}
-
-//When polling read replies, handle a reply to read, acquire, readts, rmw acquire-- return true to continue to next rep
-static inline bool handle_single_r_rep(struct r_rep_big *r_rep, uint32_t *r_ptr_, uint64_t l_id, uint64_t pull_lid,
-                                       p_ops_t *p_ops, int read_i, uint16_t r_rep_i,
-                                       uint32_t *outstanding_reads, uint16_t t_id)
-{
-  uint32_t r_ptr = *r_ptr_;
-  if (p_ops->r_size == 0) return true;
-  check_r_rep_l_id(l_id, (uint8_t) read_i, pull_lid, p_ops->r_size, t_id);
-  if (pull_lid >= l_id) {
-    if (l_id + read_i < pull_lid) return true;
-  }
-  r_info_t *read_info = &p_ops->read_info[r_ptr];
-  if (DEBUG_READ_REPS)
-    my_printf(yellow, "Read reply %u, Received replies %u/%d at r_ptr %u \n",
-              r_rep_i, read_info->rep_num, REMOTE_QUORUM, r_ptr);
-
-  read_info_bookkeeping(r_rep, read_info, t_id);
-
-  if (read_info->rep_num >= REMOTE_QUORUM) {
-    //my_printf(yellow, "%u r_ptr becomes ready, l_id %u,   \n", r_ptr, l_id);
-    p_ops->r_state[r_ptr] = READY;
-    if (ENABLE_ASSERTIONS) {
-      (*outstanding_reads)--;
-      assert(read_info->rep_num <= REM_MACH_NUM);
-    }
-  }
-  MOD_INCR(r_ptr, PENDING_READS);
-  r_rep->opcode = INVALID_OPCODE;
-  *r_ptr_ = r_ptr;
-  return false;
-}
-
-
-static inline void increase_credits_when_polling_r_reps(context_t *ctx,
-                                                        bool increase_w_credits,
-                                                        uint8_t rem_m_id)
-{
-  uint16_t *r_credits = ctx->qp_meta[PROP_QP_ID].credits;
-  uint16_t *w_credits = ctx->qp_meta[ACC_QP_ID].credits;
-  if (!increase_w_credits) {
-    if (r_credits[rem_m_id] < PROP_CREDITS)
-      r_credits[rem_m_id]++;
-  }
-  else {
-    if (w_credits[rem_m_id] < W_CREDITS)
-      w_credits[rem_m_id]++;
-  }
-  if (ENABLE_ASSERTIONS) {
-    if (r_credits[rem_m_id] > PROP_CREDITS)
-      my_printf(red, "Read credits %u \n", r_credits[rem_m_id]);
-    assert(r_credits[rem_m_id] <= PROP_CREDITS);
-    assert(w_credits[rem_m_id] <= W_CREDITS);
-  }
-}
 
 
 #endif //CP_RESERVE_STATIONS_UTIL_H

@@ -244,25 +244,65 @@ static inline void send_prop_checks(context_t *ctx)
   }
 }
 
-static inline void send_prop_rep_checks(context_t *ctx)
-{
-  if (ENABLE_ASSERTIONS) {
-    p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-    per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
-    fifo_t *send_fifo = qp_meta->send_fifo;
 
-    cp_rmw_rep_mes_t *prop_rep_buf = (cp_rmw_rep_mes_t *) qp_meta->send_fifo->fifo;
-    cp_rmw_rep_mes_t *prop_rep_mes = &prop_rep_buf[send_fifo->pull_ptr];
-    slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
-    if (DEBUG_RMW)
-      my_printf(yellow, "Worker %u sending prop_rep_mes l_id %lu, coalesce %u, to m_id %u, opcode %u\n",
-                ctx->t_id,
-                prop_rep_mes->l_id,
-                prop_rep_mes->coalesce_num,
-                prop_rep_mes->m_id,
-                prop_rep_mes->opcode);
+static inline void send_acc_checks(context_t *ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+
+  // Create the broadcast messages
+  cp_acc_mes_t *acc_buf = (cp_acc_mes_t *) qp_meta->send_fifo->fifo;
+  cp_acc_mes_t *acc_mes = &acc_buf[send_fifo->pull_ptr];
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
+  uint8_t coalesce_num = (uint8_t) slot_meta->coalesce_num;
+  if (ENABLE_ASSERTIONS) {
+    assert(send_fifo->net_capacity >= coalesce_num);
+    qp_meta->outstanding_messages += coalesce_num;
+    assert(acc_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
+    assert(acc_mes->coalesce_num > 0);
+    assert(acc_mes->m_id == (uint8_t) ctx->m_id);
+
+    if (DEBUG_RMW) {
+      cp_acc_t *acc = &acc_mes->acc[0];
+      my_printf(green, "Wrkr %u : I BROADCAST an accept message %u with %u accs with mes_size %u, with credits: %d, lid: %u, "
+                       "rmw_id %u, glob_sess id %u, log_no %u, version %u \n",
+                ctx->t_id, acc->opcode, coalesce_num, slot_meta->byte_size,
+                qp_meta->credits[(machine_id + 1) % MACHINE_NUM], acc_mes->l_id,
+                acc->t_rmw_id, acc->t_rmw_id % GLOBAL_SESSION_NUM,
+                acc->log_no, acc->ts.version);
+    }
 
   }
+  if (ENABLE_STAT_COUNTING) {
+    t_stats[ctx->t_id].accepts_sent++;
+  }
+}
+
+
+static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
+{
+  if (!ENABLE_ASSERTIONS) return;
+
+  bool is_accept = qp_id == ACC_QP_ID;
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+
+  cp_rmw_rep_mes_t *rep_buf = (cp_rmw_rep_mes_t *) qp_meta->send_fifo->fifo;
+  cp_rmw_rep_mes_t *rep_mes = &rep_buf[send_fifo->pull_ptr];
+  slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
+  if (DEBUG_RMW)
+    my_printf(yellow, "Worker %u sending %s rep_mes l_id %lu, coalesce %u, to m_id %u, opcode %u\n",
+              ctx->t_id,
+              is_accept ? "accept" : "propose",
+              rep_mes->l_id,
+              rep_mes->coalesce_num,
+              rep_mes->m_id,
+              rep_mes->opcode);
+
+
 }
 
 
@@ -641,14 +681,45 @@ static inline void count_stats_on_receiving_w_mes_reset_w_num(struct w_message *
   if (ENABLE_ASSERTIONS) w_mes->coalesce_num = 0;
 }
 
-static inline void check_accept_mes(struct w_message *acc_mes)
+static inline void check_and_print_remote_acc(cp_acc_t *acc,
+                                              cp_acc_mes_t *acc_mes,
+                                              uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    check_state_with_allowed_flags(3, acc_mes->opcode, WRITES_AND_ACCEPTS,
-                                   ONLY_ACCEPTS);
     assert(acc_mes->coalesce_num == 0); // the coalesce_num gets reset after polling a write
     assert(acc_mes->m_id < MACHINE_NUM);
+    assert(acc->ts.version > 0);
   }
+  uint64_t rmw_l_id = acc->t_rmw_id;
+  uint8_t acc_m_id = acc_mes->m_id;
+  uint32_t log_no = acc->log_no;
+  if (DEBUG_RMW) my_printf(green, "Worker %u is handling a remote RMW accept from m_id %u "
+                                  "l_id %u, rmw_l_id %u, glob_ses_id %u, log_no %u, version %u  \n",
+                           t_id, acc_m_id, acc->l_id, rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, log_no, acc->ts.version);
+}
+
+static inline void print_log_on_rmw_recv(uint64_t rmw_l_id,
+                                         uint8_t acc_m_id,
+                                         uint32_t log_no,
+                                         cp_rmw_rep_t *acc_rep,
+                                         ts_tuple_t ts,
+                                         mica_op_t *kv_ptr,
+                                         uint64_t number_of_reqs,
+                                         bool is_accept,
+                                         uint16_t t_id)
+{
+  if (PRINT_LOGS)
+    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, %s: m_id:%u, "
+                                 "rmw_id %lu, glob_sess id: %u, "
+                                 "version %u, m_id: %u, resp: %u \n",
+            kv_ptr->key.bkt, log_no, number_of_reqs,
+            is_accept ? "Acc" : "Prop",
+            acc_m_id, rmw_l_id,
+            (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM,
+            ts.version, ts.m_id, acc_rep->opcode);
+
+
+
 }
 
 
@@ -1071,6 +1142,40 @@ static inline void check_when_polling_for_props(context_t* ctx,
     t_stats[ctx->t_id].received_reads_mes_num++;
   }
 }
+
+static inline void check_when_polling_for_accs(context_t* ctx,
+                                                cp_acc_mes_t *acc_mes)
+{
+  uint8_t coalesce_num = acc_mes->coalesce_num;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  if (ENABLE_ASSERTIONS) {
+    //struct acc_message *p_mes = (struct acc_message *)r_mes;
+    cp_acc_t *acc = &acc_mes->acc[0];
+    assert(coalesce_num > 0);
+    if (DEBUG_RMW) {
+      my_printf(cyan, "Worker %u sees a Propose "
+                      "from m_id %u: opcode %d at offset %d, rmw_id %lu, "
+                      "log_no %u, coalesce_num %u version %u \n",
+                ctx->t_id, acc_mes->m_id,
+                acc->opcode,
+                recv_fifo->pull_ptr,
+                acc->t_rmw_id,
+                acc->log_no,
+                coalesce_num,
+                acc->ts.version);
+      assert(acc_mes->m_id != machine_id);
+
+    }
+    if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_PROP) assert(false);
+  }
+  if (ENABLE_STAT_COUNTING) {
+    //t_stats[ctx->t_id].received_reads += coalesce_num;
+    //t_stats[ctx->t_id].received_reads_mes_num++;
+  }
+}
+
+
 
 static inline void check_read_opcode_when_polling_for_reads(struct read *read, uint16_t read_i,
                                                             uint16_t r_num, uint16_t t_id)

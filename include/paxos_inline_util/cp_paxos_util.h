@@ -114,7 +114,8 @@ static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
 }
 
 static inline void create_prop_rep(cp_prop_t *prop,
-                                   cp_prop_rep_t *prop_rep,
+                                   cp_prop_mes_T *prop_mes,
+                                   cp_rmw_rep_t *prop_rep,
                                    mica_op_t *kv_ptr,
                                    uint16_t t_id)
 {
@@ -123,7 +124,7 @@ static inline void create_prop_rep(cp_prop_t *prop,
   uint64_t l_id = prop->l_id;
   //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
   uint32_t log_no = prop->log_no;
-  uint8_t prop_m_id = p_ops->ptrs_to_mes_headers[op_i]->m_id;
+  uint8_t prop_m_id = prop_mes->m_id;
 
   prop_rep->l_id = prop->l_id;
   lock_seqlock(&kv_ptr->seqlock);
@@ -155,12 +156,49 @@ static inline void create_prop_rep(cp_prop_t *prop,
     check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
   }
   unlock_seqlock(&kv_ptr->seqlock);
-  if (PRINT_LOGS && ENABLE_DEBUG_RMW_KV_PTR)
-    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Prop: m_id:%u, rmw_id %lu, glob_sess id: %u, "
-                                 "version %u, m_id: %u, resp: %u \n",  kv_ptr->key.bkt, log_no, number_of_reqs, prop_m_id,
-            rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, prop->ts.version, prop->ts.m_id, prop_rep->opcode);
+  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
+                        prop->ts, kv_ptr, number_of_reqs, false, t_id));
 
 
+}
+
+
+static inline void create_acc_rep(cp_acc_t *acc,
+                                  cp_acc_mes_t *acc_mes,
+                                  cp_rmw_rep_t *acc_rep,
+                                  mica_op_t *kv_ptr,
+                                  uint16_t t_id)
+{
+  uint64_t rmw_l_id = acc->t_rmw_id;
+  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
+  uint32_t log_no = acc->log_no;
+  uint8_t acc_m_id = acc_mes->m_id;
+  acc_rep->l_id = acc->l_id;
+
+
+  lock_seqlock(&kv_ptr->seqlock);
+  if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
+    if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
+      acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
+      if (acc_rep->opcode == RMW_ACK) {
+        activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
+                         acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                         ENABLE_ASSERTIONS ? "received accept" : NULL);
+        memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
+        kv_ptr->base_acc_ts = acc->base_ts;
+      }
+    }
+  }
+  uint64_t number_of_reqs = 0;
+
+  if (ENABLE_DEBUG_RMW_KV_PTR) {
+    // kv_ptr->dbg->prop_acc_num++;
+    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+  }
+  check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
+  unlock_seqlock(&kv_ptr->seqlock);
+  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
+                        prop->ts, kv_ptr, number_of_reqs, false, t_id));
 }
 
 /*--------------------------------------------------------------------------
@@ -844,7 +882,7 @@ static inline void handle_rmw_rep_replies(p_ops_t *p_ops, cp_rmw_rep_mes_t *r_re
                                  PROP_REPLY, ACCEPT_REPLY_NO_CREDITS);
   uint8_t rep_num = rep_mes->coalesce_num;
   //my_printf(yellow, "Received opcode %u, prop_rep num %u \n", r_rep_mes->opcode, rep_num);
-  uint16_t byte_ptr = PROP_REP_MES_HEADER; // same for both accepts and replies
+  uint16_t byte_ptr = RMW_REP_MES_HEADER; // same for both accepts and replies
   for (uint16_t r_rep_i = 0; r_rep_i < rep_num; r_rep_i++) {
     struct rmw_rep_last_committed *rep = (struct rmw_rep_last_committed *) (((void *) rep_mes) + byte_ptr);
     handle_single_rmw_rep(p_ops, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
@@ -1047,10 +1085,11 @@ static inline void handle_already_committed_rmw(p_ops_t *p_ops,
 
 //------------------------------ACKS------------------------------------------
 // If a quorum of proposal acks have been gathered, try to broadcast accepts
-static inline void act_on_quorum_of_prop_acks(p_ops_t *p_ops, loc_entry_t *loc_entry,
+static inline void act_on_quorum_of_prop_acks(context_t *ctx, loc_entry_t *loc_entry,
                                               uint16_t t_id)
 {
   // first we need to accept locally,
+  p_ops_t *p_ops = (p_ops_t*) ctx->appl_ctx;
   attempt_local_accept(p_ops, loc_entry, t_id);
   check_state_with_allowed_flags(4, loc_entry->state, ACCEPTED, NEEDS_KV_PTR, MUST_BCAST_COMMITS);
   checks_acting_on_quorum_of_prop_ack(loc_entry, t_id);
@@ -1059,8 +1098,8 @@ static inline void act_on_quorum_of_prop_acks(p_ops_t *p_ops, loc_entry_t *loc_e
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
     local_rmw_ack(loc_entry);
     check_loc_entry_metadata_is_reset(loc_entry, "act_on_quorum_of_prop_acks", t_id);
-    insert_accept_in_writes_message_fifo(p_ops, loc_entry, false, t_id);
-        loc_entry->killable = false;
+    cp_acc_insert(ctx, loc_entry, false);
+    loc_entry->killable = false;
   }
 }
 
@@ -1070,7 +1109,7 @@ static inline void act_on_quorum_of_prop_acks(p_ops_t *p_ops, loc_entry_t *loc_e
 
 //------------------------------SEEN-LOWER_ACCEPT------------------------------------------
 // When a quorum of prop replies have been received, and one of the replies says it has accepted an RMW with lower TS
-static inline void act_on_receiving_already_accepted_rep_to_prop(p_ops_t *p_ops,
+static inline void act_on_receiving_already_accepted_rep_to_prop(context_t *ctx,
                                                                  loc_entry_t* loc_entry,
                                                                  uint16_t t_id)
 {
@@ -1080,7 +1119,7 @@ static inline void act_on_receiving_already_accepted_rep_to_prop(p_ops_t *p_ops,
     loc_entry->helping_flag = HELPING;
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
     local_rmw_ack(loc_entry);
-    insert_accept_in_writes_message_fifo(p_ops, loc_entry->help_loc_entry, true, t_id);
+    cp_acc_insert(ctx, loc_entry, true);
   }
 
 }
@@ -1362,10 +1401,11 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
 }
 
 // Inspect each propose that has gathered a quorum of replies
-static inline void inspect_proposes(p_ops_t *p_ops,
+static inline void inspect_proposes(context_t *ctx,
                                     loc_entry_t *loc_entry,
                                     uint16_t t_id)
 {
+  p_ops_t *p_ops = (p_ops_t*) ctx->appl_ctx;
   bool zero_out_log_too_high_cntr = true;
   struct rmw_rep_info *rep_info = &loc_entry->rmw_reps;
   uint8_t remote_quorum = QUORUM_NUM;
@@ -1398,7 +1438,7 @@ static inline void inspect_proposes(p_ops_t *p_ops,
            loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED) {
     debug_fail_help(loc_entry, " quorum", t_id);
     // Quorum of prop acks gathered: send an accept
-    act_on_quorum_of_prop_acks(p_ops, loc_entry, t_id);
+    act_on_quorum_of_prop_acks(ctx, loc_entry, t_id);
     check_state_with_allowed_flags(4, (int) loc_entry->state,
                                    ACCEPTED, NEEDS_KV_PTR, MUST_BCAST_COMMITS);
   }
@@ -1406,8 +1446,8 @@ static inline void inspect_proposes(p_ops_t *p_ops,
   else if (rep_info->already_accepted > 0) {
     debug_fail_help(loc_entry, " already accepted", t_id);
     if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
-      act_on_quorum_of_prop_acks(p_ops, loc_entry, t_id);
-    else act_on_receiving_already_accepted_rep_to_prop(p_ops, loc_entry, t_id);
+      act_on_quorum_of_prop_acks(ctx, loc_entry, t_id);
+    else act_on_receiving_already_accepted_rep_to_prop(ctx, loc_entry, t_id);
     check_state_with_allowed_flags(4, (int) loc_entry->state, ACCEPTED,
                                    NEEDS_KV_PTR, MUST_BCAST_COMMITS);
   }
@@ -1528,7 +1568,7 @@ static inline void insert_rmw(context_t *ctx, trace_op_t *op,
         assert(op->ts.version == ALL_ABOARD_TS);
       }
       loc_entry->accepted_log_no = loc_entry->log_no;
-      insert_accept_in_writes_message_fifo(p_ops, loc_entry, false, t_id);
+      cp_acc_insert(ctx, loc_entry, false);
       loc_entry->killable = false;
       loc_entry->all_aboard = true;
       loc_entry->all_aboard_time_out = 0;

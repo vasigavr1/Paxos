@@ -23,8 +23,8 @@
 // PROPOSES
 #define PROP_MES_HEADER (10) // local id + coalesce num + m_id
 #define PROP_SIZE (42 + 2) // l_id 8, RMW_id- 8, ts 5, key 8, log_number 4, opcode 1 + basets 8
-#define PRP_MES_SIZE (PROP_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
-#define PROP_RECV_SIZE (GRH_SIZE + PRP_MES_SIZE)
+#define PROP_MES_SIZE (PROP_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
+#define PROP_RECV_SIZE (GRH_SIZE + PROP_MES_SIZE)
 
 #define MAX_PROP_WRS (MESSAGES_IN_BCAST_BATCH)
 #define MAX_RECV_PROP_WRS ((PROP_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
@@ -32,29 +32,26 @@
 
 //
 #define MAX_PROP_REP_WRS (PROP_CREDITS * REM_MACH_NUM)
-#define PROP_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1 TODO remove opcode
+#define RMW_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1 TODO remove opcode
+#define RMW_REP_SMALL_SIZE 9 // lid and opcode
+#define RMW_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
 // PROPOSE REPLIES
 #define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 8, ts 5, log_no - 4,  RMW value, opcode 1
-#define PROP_REP_SMALL_SIZE 9 // lid and opcode
-#define PROP_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
 #define PROP_REP_BASE_TS_STALE_SIZE (9 + TS_TUPLE_SIZE + RMW_VALUE_SIZE)
-#define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //lid 8, opcode 1, ts 5, rmw-id 8 + base_ts 5
+#define PROP_REP_ACCEPTED_SIZE (RMW_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //lid 8, opcode 1, ts 5, rmw-id 8 + base_ts 5
 #define PROP_REP_SIZE PROP_REP_ACCEPTED_SIZE
-#define PROP_REP_MES_SIZE (PROP_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
+#define PROP_REP_MES_SIZE (RMW_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
 #define MAX_RECV_PROP_REP_WRS ((REM_MACH_NUM * PROP_CREDITS))
 #define PROP_REP_RECV_SIZE (GRH_SIZE + PROP_REP_MES_SIZE)
 #define PROP_REP_FIFO_SIZE (MAX_INCOMING_PROP)
 
 
 // ACCEPT REPLIES
-#define ACC_REP_MES_HEADER (PROP_REP_MES_HEADER)
 #define MAX_ACC_REP_WRS (ACC_CREDITS * REM_MACH_NUM)
 #define MAX_RECV_ACC_REP_WRS ((REM_MACH_NUM * ACC_CREDITS))
-#define ACC_REP_SMALL_SIZE (PROP_REP_SMALL_SIZE) // lid and opcode
-#define ACC_REP_ONLY_TS_SIZE (PROP_REP_ONLY_TS_SIZE)
 // TODO refactor the sizes, the biggest accept reply is smaller than the biggest prop-reply (for seen lower accept)
 #define ACC_REP_SIZE PROP_REP_SIZE // (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
-#define ACC_REP_MES_SIZE (ACC_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
+#define ACC_REP_MES_SIZE (RMW_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
 #define ACC_REP_RECV_SIZE (GRH_SIZE + ACC_REP_MES_SIZE)
 
 // ACCEPTS -- ACCEPT coalescing is derived from max write capacity. ACC reps are derived from accept coalescing
@@ -148,7 +145,7 @@ typedef struct write {
 } __attribute__((__packed__)) write_t;
 
 
-struct accept {
+typedef struct accept {
   struct network_ts_tuple ts;
   uint8_t opcode;
   uint8_t val_len;
@@ -160,9 +157,21 @@ struct accept {
   ts_tuple_t base_ts;
   //uint8_t unused_[3];
   uint8_t value[RMW_VALUE_SIZE];
+} __attribute__((__packed__)) cp_acc_t;
 
+typedef struct cp_acc_mes {
+  uint64_t l_id;
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  cp_acc_t acc[ACC_COALESCE];
 
-} __attribute__((__packed__));
+}__attribute__((__packed__)) cp_acc_mes_t;
+
+typedef struct cp_acc_message_ud_req {
+  uint8_t grh[GRH_SIZE];
+  cp_acc_mes_t acc_mes;
+} cp_acc_mes_ud_t;
+
 
 
 struct commit_no_val {
@@ -223,7 +232,7 @@ typedef struct cp_prop_message_ud_req {
   cp_prop_mes_t prop_mes;
 } cp_prop_mes_ud_t;
 
-/// PROP REPS
+/// RMW REPS
 typedef struct rmw_rep_last_committed {
   uint8_t opcode;
   uint64_t l_id; // the l_id of the rmw local_entry
@@ -232,7 +241,7 @@ typedef struct rmw_rep_last_committed {
   uint64_t rmw_id; //accepted  OR last committed
   uint32_t log_no_or_base_version; // log no for RMW-already-committed/Log-too-low, base_ts.version for proposed/accepted
   uint8_t base_m_id; // base_ts.m_id used in a LowerAcc reply to a propose
-} __attribute__((__packed__)) cp_prop_rep_t;
+} __attribute__((__packed__)) cp_rmw_rep_t;
 
 
 typedef struct rmw_rep_message {
@@ -240,13 +249,13 @@ typedef struct rmw_rep_message {
   uint8_t m_id;
   uint8_t opcode;
   uint64_t l_id ;
-  cp_prop_rep_t rmw_rep[PROP_COALESCE];
+  cp_rmw_rep_t rmw_rep[MAX_COALESCE];
 }__attribute__((__packed__)) cp_rmw_rep_mes_t;
 
-typedef struct cp_prop_rep_message_ud_req {
+typedef struct cp_rmw_rep_message_ud_req {
   uint8_t grh[GRH_SIZE];
-  cp_prop_mes_t prop_rep_mes;
-} cp_prop_rep_mes_ud_t;
+  cp_rmw_rep_mes_t rep_mes;
+} cp_rmw_rep_mes_ud_t;
 
 
 

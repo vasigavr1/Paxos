@@ -186,7 +186,7 @@ static inline uint16_t get_size_from_opcode(uint8_t opcode)
       return PROP_REP_ACCEPTED_SIZE;
     case SEEN_HIGHER_PROP:
     case SEEN_HIGHER_ACC:
-      return PROP_REP_ONLY_TS_SIZE;
+      return RMW_REP_ONLY_TS_SIZE;
     case RMW_ACK_BASE_TS_STALE:
       return PROP_REP_BASE_TS_STALE_SIZE;
     case RMW_ID_COMMITTED:
@@ -194,7 +194,7 @@ static inline uint16_t get_size_from_opcode(uint8_t opcode)
     case RMW_ACK:
     case LOG_TOO_HIGH:
     case NO_OP_PROP_REP:
-      return PROP_REP_SMALL_SIZE;
+      return RMW_REP_SMALL_SIZE;
     default: if (ENABLE_ASSERTIONS) {
         my_printf(red, "Opcode %u \n", opcode);
         assert(false);
@@ -415,9 +415,20 @@ static inline void cp_prop_insert(context_t *ctx, loc_entry_t *loc_entry)
 {
   od_insert_mes(ctx, PROP_QP_ID,
                 (uint32_t)PROP_SIZE,
-                PROP_REP_ACCEPTED_SIZE,
+                PROP_REP_SIZE,
                 false, loc_entry,
                 0, 0);
+}
+
+static inline void cp_acc_insert(context_t *ctx,
+                                 loc_entry_t *loc_entry,
+                                 bool helping)
+{
+  od_insert_mes(ctx, ACC_QP_ID,
+                (uint32_t) ACC_SIZE,
+                ACC_REP_MES_SIZE,
+                false, loc_entry,
+                helping, 0);
 }
 
 #endif //CP_GENERIC_UTILITY_H

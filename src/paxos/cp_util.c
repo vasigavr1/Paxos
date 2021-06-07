@@ -35,48 +35,33 @@ void cp_static_assert_compile_parameters()
   static_assert(VALUE_SIZE == (RMW_VALUE_SIZE), "RMW requires the value to be at least this many bytes");
   static_assert(MACHINE_NUM <= 255, ""); // for deprecated reasons
 
-  // WRITES
-  static_assert(W_SEND_SIZE >= W_MES_SIZE &&
-                W_SEND_SIZE >= ACC_MES_SIZE &&
-                W_SEND_SIZE >= COM_MES_SIZE &&
-                W_SEND_SIZE <= MAX_WRITE_SIZE, "");
-  static_assert(W_SEND_SIZE <= MTU, "");
+  // ACCEPTS
 
-  static_assert(PRP_MES_SIZE <= MTU, "");
-  // R_REPS
-//  static_assert(R_REP_SEND_SIZE >= PROP_REP_MES_SIZE &&
-//                R_REP_SEND_SIZE >= ACC_REP_MES_SIZE &&
-//                R_REP_SEND_SIZE >= READ_TS_REP_MES_SIZE &&
-//                R_REP_SEND_SIZE >= ACQ_REP_MES_SIZE, "");
-  static_assert(PROP_REP_SEND_SIZE <= MTU, "");
+
+  static_assert(PROP_MES_SIZE <= MTU, "");
+  static_assert(PROP_REP_MES_SIZE <= MTU, "");
 
   // COALESCING
-  static_assert(MAX_WRITE_COALESCE < 256, "");
   static_assert(PROP_COALESCE < 256, "");
-  static_assert(MAX_REPS_IN_REP < 256, "");
   static_assert(PROP_COALESCE > 0, "");
-  static_assert(R_COALESCE > 0, "");
-  static_assert(W_COALESCE > 0, "");
   static_assert(ACC_COALESCE > 0, "");
   static_assert(COM_COALESCE > 0, "");
 
   // NETWORK STRUCTURES
-  static_assert(sizeof(struct read) == R_SIZE, "");
-  static_assert(sizeof(struct r_message) == R_MES_SIZE, "");
-  static_assert(sizeof(write_t) == W_SIZE, "");
-  static_assert(sizeof(struct w_message) == W_MES_SIZE, "");
-  static_assert(sizeof(struct propose) == PROP_SIZE, "");
+
+  static_assert(sizeof(cp_prop_t) == PROP_SIZE, "");
+  static_assert(sizeof(cp_prop_mes_t) == PROP_MES_SIZE, "");
+  static_assert(sizeof(cp_acc_mes_t) == ACC_MES_SIZE, "");
+  static_assert(sizeof(cp_acc_t) == ACC_SIZE, "");
   static_assert(PROP_REP_ACCEPTED_SIZE == PROP_REP_LOG_TOO_LOW_SIZE + 1, "");
   static_assert(sizeof(struct rmw_rep_last_committed) == PROP_REP_ACCEPTED_SIZE, "");
   static_assert(sizeof(struct rmw_rep_message) == PROP_REP_MES_SIZE, "");
-  static_assert(sizeof(struct accept) == ACC_SIZE, "");
-  static_assert(sizeof(struct r_rep_big) == ACQ_REP_SIZE, "");
   static_assert(sizeof(struct commit) == COMMIT_SIZE, "");
   // UD- REQS
-  static_assert(sizeof(r_rep_mes_ud_t) == R_REP_RECV_SIZE, "");
+  static_assert(sizeof(cp_prop_mes_ud_t) == PROP_RECV_SIZE, "");
+  static_assert(sizeof(cp_acc_mes_ud_t) == ACC_RECV_SIZE, "");
   static_assert(sizeof(ctx_ack_mes_ud_t) == CTX_ACK_RECV_SIZE, "");
-  static_assert(sizeof(w_mes_ud_t) == W_RECV_SIZE, "");
-  static_assert(sizeof(r_mes_ud_t) == PROP_RECV_SIZE, "");
+
 
   // we want to have more write slots than credits such that we always know that if a machine fails
   // the pressure will appear in the credits and not the write slots
@@ -86,9 +71,7 @@ void cp_static_assert_compile_parameters()
   static_assert(GLOBAL_SESSION_NUM < K_64, "global session ids are stored in uint16_t");
 
   // ACCEPT REPLIES MAP TO PROPOSE REPLIES
-  static_assert(ACC_REP_SIZE == PROP_REP_LOG_TOO_LOW_SIZE, "");
-  static_assert(ACC_REP_SMALL_SIZE == PROP_REP_SMALL_SIZE, "");
-  static_assert(ACC_REP_ONLY_TS_SIZE == PROP_REP_ONLY_TS_SIZE, "");
+  //static_assert(ACC_REP_SIZE == PROP_REP_LOG_TOO_LOW_SIZE, "");
   //static_assert(ACC_REP_ACCEPTED_SIZE == PROP_REP_ACCEPTED_SIZE, "");
 
 
@@ -233,11 +216,37 @@ void randomize_op_values(trace_op_t *ops, uint16_t t_id)
 /* ---------------------------------------------------------------------------
 ------------------------------CP WORKER --------------------------------------
 ---------------------------------------------------------------------------*/
+void cp_init_send_fifos(context_t *ctx)
+{
+  fifo_t *send_fifo = ctx->qp_meta[PROP_QP_ID].send_fifo;
+  cp_prop_mes_t *props = (cp_prop_mes_t *) send_fifo->fifo;
+
+  for (uint32_t i = 0; i < PROP_FIFO_SIZE; i++) {
+    props[i].m_id = ctx->m_id;
+  }
+
+  send_fifo = ctx->qp_meta[ACC_QP_ID].send_fifo;
+  cp_acc_mes_t *accs = (cp_acc_mes_t *) send_fifo->fifo;
+
+  for (uint32_t i = 0; i < ACC_FIFO_SIZE; i++) {
+    accs[i].m_id = ctx->m_id;
+  }
+
+  ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo;
+  assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == CTX_ACK_SIZE * MACHINE_NUM);
+  memset(ack_send_buf, 0, ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size);
+  for (int i = 0; i < MACHINE_NUM; i++) {
+    ack_send_buf[i].m_id = ctx->m_id;
+    ack_send_buf[i].opcode = OP_ACK;
+  }
+}
+
+
 void cp_qp_meta_mfs(context_t *ctx)
 {
   mf_t *mfs = calloc(QP_NUM, sizeof(mf_t));
 
-  mfs[PROP_QP_ID].insert_helper = insert_prop_help;
+  mfs[PROP_QP_ID].insert_helper = cp_insert_prop_help;
   mfs[PROP_QP_ID].send_helper = send_props_helper;
   mfs[PROP_QP_ID].recv_handler = prop_recv_handler;
   mfs[PROP_QP_ID].recv_kvs = cp_KVS_batch_op_props;
@@ -246,6 +255,15 @@ void cp_qp_meta_mfs(context_t *ctx)
   mfs[PROP_REP_QP_ID].insert_helper = cp_insert_prop_rep_helper;
   mfs[PROP_REP_QP_ID].send_helper = cp_prop_rep_helper;
   mfs[PROP_REP_QP_ID].recv_handler = cp_prop_rep_recv_handler;
+
+  mfs[ACC_QP_ID].insert_helper = cp_insert_acc_help;
+  mfs[ACC_QP_ID].send_helper = send_accs_helper;
+  mfs[ACC_QP_ID].recv_handler = acc_recv_handler;
+  mfs[ACC_QP_ID].recv_kvs = cp_KVS_batch_op_accs;
+
+  mfs[ACC_REP_QP_ID].insert_helper = cp_insert_acc_rep_helper;
+  mfs[ACC_REP_QP_ID].send_helper = cp_acc_rep_helper;
+  mfs[ACC_REP_QP_ID].recv_handler = cp_acc_rep_recv_handler;
 
   ctx_set_qp_meta_mfs(ctx, mfs);
   free(mfs);
@@ -258,7 +276,7 @@ void cp_init_qp_meta(context_t *ctx)
                      MAX_RECV_PROP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
                      PROP_REP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, PROP_BUF_SLOTS,
-                     PROP_RECV_SIZE, PRP_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     PROP_RECV_SIZE, PROP_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
                      PROP_SEND_MCAST_QP, 0, PROP_FIFO_SIZE,
                      PROP_CREDITS, PROP_MES_HEADER,
                      "send props", "recv props");
@@ -269,7 +287,7 @@ void cp_init_qp_meta(context_t *ctx)
                      REM_MACH_NUM, REM_MACH_NUM, PROP_REP_BUF_SLOTS,
                      PROP_REP_RECV_SIZE, PROP_REP_MES_SIZE, false, false,
                      0, 0, PROP_REP_FIFO_SIZE,
-                     0, PROP_REP_MES_HEADER,
+                     0, RMW_REP_MES_HEADER,
                      "send prop_reps", "recv prop_reps");
 
   ///
@@ -288,7 +306,7 @@ void cp_init_qp_meta(context_t *ctx)
                      REM_MACH_NUM, REM_MACH_NUM, ACC_REP_BUF_SLOTS,
                      ACC_REP_RECV_SIZE, ACC_REP_MES_SIZE, false, false,
                      0, 0, ACC_REP_FIFO_SIZE,
-                     0, ACC_REP_MES_HEADER,
+                     0, RMW_REP_MES_HEADER,
                      "send accepts reps", "recv accepts reps");
   ///
 
@@ -296,6 +314,9 @@ void cp_init_qp_meta(context_t *ctx)
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
                      CP_COM_QP_ID, REM_MACH_NUM,
                      REM_MACH_NUM, W_CREDITS);
+
+  cp_qp_meta_mfs(ctx);
+  cp_init_send_fifos(ctx);
 }
 
 cp_debug_t *init_debug_loop_struct()
@@ -307,76 +328,15 @@ cp_debug_t *init_debug_loop_struct()
   }
   return loop_dbg;
 }
-// Initialize the pending ops struct
-p_ops_t* cp_set_up_pending_ops(context_t *ctx)
+
+void cp_init_loc_entry(p_ops_t *p_ops, uint16_t t_id)
 {
-  uint32_t pending_reads = (uint32_t) PENDING_READS;
-  uint32_t pending_writes = (uint32_t) PENDING_WRITES;
-  uint32_t i, j;
-  p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
-
-  p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
-  p_ops->ptrs_to_prop = calloc(1, sizeof(ptrs_to_prop_t));
-  p_ops->ptrs_to_prop->ptr_to_ops = calloc(MAX_INCOMING_PROP, sizeof(cp_prop_t*));
-  p_ops->ptrs_to_prop->ptr_to_mes = calloc(MAX_INCOMING_PROP, sizeof(cp_prop_mes_t*));
-  p_ops->ptrs_to_prop->break_message = calloc(MAX_INCOMING_PROP, sizeof(bool));
-
-
-
-  //p_ops->w_state = (uint8_t *) malloc(zk_ctx * sizeof(uint8_t *));
-  p_ops->r_state = (uint8_t *) malloc(pending_reads * sizeof(uint8_t *));
-  //p_ops->w_session_id = (uint32_t *) calloc(zk_ctx, sizeof(uint32_t));
-  p_ops->r_session_id = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-  p_ops->w_index_to_req_array = (uint32_t *) calloc(pending_writes, sizeof(uint32_t));
-  p_ops->r_index_to_req_array = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-  //p_ops->session_has_pending_op = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
-  //p_ops->acks_seen = (uint8_t *) calloc(zk_ctx, sizeof(uint8_t));
-  p_ops->read_info = (r_info_t *) calloc(pending_reads, sizeof(r_info_t));
-  p_ops->p_ooe_writes =
-    (struct pending_out_of_epoch_writes *) calloc(1, sizeof(struct pending_out_of_epoch_writes));
-
-
-  // R_REP_FIFO
-  p_ops->r_rep_fifo = (struct r_rep_fifo *) calloc(1, sizeof(struct r_rep_fifo));
-  fifo_t *r_rep_send_fifo = ctx->qp_meta[PROP_REP_QP_ID].send_fifo;
-  assert(r_rep_send_fifo->max_byte_size == R_REP_FIFO_SIZE * ALIGNED_R_REP_SEND_SIDE);
-  p_ops->r_rep_fifo->r_rep_message = (struct r_rep_message_template *) r_rep_send_fifo->fifo;
-    //(struct r_rep_message_template *) calloc((size_t)R_REP_FIFO_SIZE, (size_t)ALIGNED_R_REP_SEND_SIDE);
-  p_ops->r_rep_fifo->rem_m_id = (uint8_t *) malloc(R_REP_FIFO_SIZE * sizeof(uint8_t));
-  p_ops->r_rep_fifo->pull_ptr = 1;
-  for (i= 0; i < R_REP_FIFO_SIZE; i++) p_ops->r_rep_fifo->rem_m_id[i] = MACHINE_NUM;
-  p_ops->r_rep_fifo->message_sizes = (uint16_t *) calloc((size_t) R_REP_FIFO_SIZE, sizeof(uint16_t));
-
-  // W_FIFO
-  p_ops->w_fifo = (write_fifo_t *) calloc(1, sizeof(write_fifo_t));
-  fifo_t *w_send_fifo = ctx->qp_meta[ACC_QP_ID].send_fifo;
-  assert(w_send_fifo->max_byte_size == W_FIFO_SIZE * ALIGNED_W_SEND_SIDE);
-  p_ops->w_fifo->w_message = (struct w_message_template *) w_send_fifo->fifo;
-    //(struct w_message_template *) calloc((size_t)W_FIFO_SIZE, (size_t) ALIGNED_W_SEND_SIDE);
-
-  // R_FIFO
-  p_ops->r_fifo = (struct read_fifo *) calloc(1, sizeof(struct read_fifo));
-  fifo_t *r_send_fifo = ctx->qp_meta[PROP_QP_ID].send_fifo;
-  assert(r_send_fifo->max_byte_size == PROP_FIFO_SIZE * ALIGNED_R_SEND_SIDE);
-  p_ops->r_fifo->r_message = (struct r_message_template *) r_send_fifo->fifo; //calloc(PROP_FIFO_SIZE, (size_t) ALIGNED_R_SEND_SIDE);
-
-  ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo; //calloc(MACHINE_NUM, sizeof(ctx_ack_mes_t));
-  assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == CTX_ACK_SIZE * MACHINE_NUM);
-  memset(ack_send_buf, 0, ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size);
-  for (i = 0; i < MACHINE_NUM; i++) {
-    ack_send_buf[i].m_id = (uint8_t) machine_id;
-    ack_send_buf[i].opcode = OP_ACK;
-  }
-
-
-  // PREP STRUCT
   p_ops->prop_info = (struct prop_info *)malloc(sizeof(struct prop_info));
   memset(p_ops->prop_info, 0, sizeof(struct prop_info));
-  //assert(IS_ALIGNED(p_ops->prop_info, 64));
-  for (i = 0; i < LOCAL_PROP_NUM; i++) {
+  for (uint32_t i = 0; i < LOCAL_PROP_NUM; i++) {
     loc_entry_t *loc_entry = &p_ops->prop_info->entry[i];
     loc_entry->sess_id = (uint16_t) i;
-    loc_entry->glob_sess_id = get_glob_sess_id((uint8_t)machine_id, ctx->t_id, (uint16_t) i);
+    loc_entry->glob_sess_id = get_glob_sess_id((uint8_t)machine_id, t_id, (uint16_t) i);
     loc_entry->l_id = (uint64_t) loc_entry->sess_id;
     loc_entry->rmw_id.id = (uint64_t) loc_entry->glob_sess_id;
     loc_entry->help_rmw = (struct rmw_help_entry *) calloc(1, sizeof(struct rmw_help_entry));
@@ -386,48 +346,34 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
     loc_entry->help_loc_entry->glob_sess_id = loc_entry->glob_sess_id;
     loc_entry->state = INVALID_RMW;
   }
+}
+
+// Initialize the pending ops struct
+p_ops_t* cp_set_up_pending_ops(context_t *ctx)
+{
+  uint32_t pending_reads = (uint32_t) PENDING_READS;
+  uint32_t pending_writes = (uint32_t) PENDING_WRITES;
+  p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
+
+  p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
+  p_ops->inserted_acc_id = calloc(MACHINE_NUM, sizeof(uint64_t));
+  p_ops->ptrs_to_ops = calloc(1, sizeof(cp_ptrs_to_ops_t));
+
+  uint32_t max_incoming_ops = MAX(MAX_INCOMING_PROP, MAX_INCOMING_ACC);
+  p_ops->ptrs_to_ops->ptr_to_ops = calloc(max_incoming_ops, sizeof(void*));
+  p_ops->ptrs_to_ops->ptr_to_mes = calloc(max_incoming_ops, sizeof(void*));
+  p_ops->ptrs_to_ops->break_message = calloc(max_incoming_ops, sizeof(bool));
+
+  cp_init_loc_entry(p_ops, ctx->t_id);
   p_ops->stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
+
+
+// TODO delete
+  p_ops->r_session_id = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
+  p_ops->w_index_to_req_array = (uint32_t *) calloc(pending_writes, sizeof(uint32_t));
+  p_ops->r_index_to_req_array = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
+  p_ops->read_info = (r_info_t *) calloc(pending_reads, sizeof(r_info_t));
   p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
-
-
-
-   uint32_t max_incoming_w_r = (uint32_t) MAX(MAX_INCOMING_PROP, MAX_INCOMING_W);
-  p_ops->ptrs_to_mes_headers =
-    (struct r_message **) malloc(max_incoming_w_r * sizeof(struct r_message *));
-  p_ops->coalesce_r_rep =
-    (bool *) malloc(max_incoming_w_r* sizeof(bool));
-
-  // PTRS to R_OPS
-  p_ops->ptrs_to_mes_ops = (void **) malloc(max_incoming_w_r * sizeof(struct read *));
-  // PTRS to local ops to find the write after sending the first round of a release
-  p_ops->ptrs_to_local_w = (write_t **) malloc(pending_writes * sizeof(write_t *));
-  p_ops->overwritten_values = (uint8_t *) calloc(pending_writes, SEND_CONF_VEC_SIZE);
-
-
-
-  for (i = 0; i < W_FIFO_SIZE; i++) {
-    struct w_message *w_mes = (struct w_message *) &p_ops->w_fifo->w_message[i];
-    w_mes->m_id = (uint8_t) machine_id;
-  }
-  p_ops->w_fifo->info[0].message_size = W_MES_HEADER;
-
-  for (i = 0; i < PROP_FIFO_SIZE; i++) {
-    struct r_message *r_mes = (struct r_message *) &p_ops->r_fifo->r_message[i];
-    r_mes->m_id= (uint8_t) machine_id;
-  }
-  p_ops->r_fifo->info[0].message_size = PROP_MES_HEADER;
-
-  for (i = 0; i < R_REP_FIFO_SIZE; i++) {
-    struct rmw_rep_message *rmw_mes = (struct rmw_rep_message *) &p_ops->r_rep_fifo->r_rep_message[i];
-    assert(((void *)rmw_mes - (void *)p_ops->r_rep_fifo->r_rep_message) % ALIGNED_R_REP_SEND_SIDE == 0);
-    rmw_mes->m_id = (uint8_t) machine_id;
-  }
-  for (i = 0; i < pending_reads; i++)
-    p_ops->r_state[i] = INVALID;
-  for (i = 0; i < pending_writes; i++) {
-    p_ops->w_meta[i].w_state = INVALID;
-    p_ops->ptrs_to_local_w[i] = NULL;
-  }
 
 
   p_ops->ops = (trace_op_t *) calloc(MAX_OP_BATCH, sizeof(trace_op_t));

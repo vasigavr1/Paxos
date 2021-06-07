@@ -123,6 +123,7 @@ static inline void KVS_updates_writes_or_releases_or_acquires(write_t *op,
 }
 
 
+
 // Handle a remote RMW accept message in the KVS
 static inline void KVS_updates_accepts(struct accept *acc, mica_op_t *kv_ptr,
                                        p_ops_t *p_ops,
@@ -361,14 +362,13 @@ static inline void KVS_batch_op_updates(uint16_t op_num, uint16_t t_id, write_t 
   }
 }
 
-// The worker send here the incoming reads, the reads check the incoming base_ts if it is  bigger/equal to the local
-// the just ack it, otherwise they send the value back
+
 static inline void cp_KVS_batch_op_props(context_t *ctx)
 {
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  ptrs_to_prop_t *ptrs_to_prop = p_ops->ptrs_to_prop;
-  cp_prop_t **props = ptrs_to_prop->ptr_to_ops;
-  uint16_t op_num = ptrs_to_prop->polled_props;
+  cp_ptrs_to_ops_t *ptrs_to_prop = p_ops->ptrs_to_ops;
+  cp_prop_t **props = (cp_prop_t **) ptrs_to_prop->ptr_to_ops;
+  uint16_t op_num = ptrs_to_prop->polled_ops;
   uint16_t op_i;
 
   if (ENABLE_ASSERTIONS) {
@@ -393,12 +393,48 @@ static inline void cp_KVS_batch_op_props(context_t *ctx)
     cp_prop_t *prop = props[op_i];
     if (ENABLE_ASSERTIONS) assert(prop->opcode == PROPOSE_OP);
 
-    od_insert_mes(ctx, PROP_REP_QP_ID, PROP_REP_SMALL_SIZE, 0,
+    od_insert_mes(ctx, PROP_REP_QP_ID, RMW_REP_SMALL_SIZE, 0,
                   ptrs_to_prop->break_message[op_i],
                   (void *) kv_ptr[op_i], op_i, 0);
   }
 }
 
+
+static inline void cp_KVS_batch_op_accs(context_t *ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_acc = p_ops->ptrs_to_ops;
+  cp_acc_t **accs = (cp_acc_t **) ptrs_to_acc->ptr_to_ops;
+  uint16_t op_num = ptrs_to_acc->polled_ops;
+  uint16_t op_i;
+
+  if (ENABLE_ASSERTIONS) {
+    assert(accs != NULL);
+    assert(op_num <= MAX_INCOMING_ACC);
+  }
+  unsigned int bkt[MAX_INCOMING_ACC];
+  struct mica_bkt *bkt_ptr[MAX_INCOMING_ACC];
+  unsigned int tag[MAX_INCOMING_ACC];
+  mica_op_t *kv_ptr[MAX_INCOMING_ACC];	/* Ptr to KV item in log */
+  /*
+     * We first lookup the key in the datastore. The first two @I loops work
+     * for both GETs and PUTs.
+     */
+  for(op_i = 0; op_i < op_num; op_i++) {
+    KVS_locate_one_bucket(op_i, bkt, &accs[op_i]->key , bkt_ptr, tag, kv_ptr, KVS);
+  }
+  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
+
+  for(op_i = 0; op_i < op_num; op_i++) {
+    od_KVS_check_key(kv_ptr[op_i], accs[op_i]->key, op_i);
+    cp_acc_t *acc = accs[op_i];
+    if (ENABLE_ASSERTIONS) assert(acc->opcode == ACCEPT_OP);
+
+    od_insert_mes(ctx, ACC_REP_QP_ID, RMW_REP_SMALL_SIZE, 0,
+                  ptrs_to_acc->break_message[op_i],
+                  (void *) kv_ptr[op_i], op_i, 0);
+  }
+}
 
 
 

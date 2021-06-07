@@ -247,12 +247,12 @@ struct pending_out_of_epoch_writes {
 typedef struct trace_op trace_op_t;
 typedef struct cp_p_ops_debug cp_debug_t;
 
-typedef struct ptrs_to_props {
-  uint16_t polled_props;
-  cp_prop_t **ptr_to_ops;
-  cp_prop_mes_t **ptr_to_mes;
+typedef struct cp_ptr_to_ops {
+  uint16_t polled_ops;
+  void **ptr_to_ops;
+  void **ptr_to_mes;
   bool *break_message;
-} ptrs_to_prop_t;
+} cp_ptrs_to_ops_t;
 
 typedef struct pending_ops {
 	write_fifo_t *w_fifo;
@@ -261,7 +261,7 @@ typedef struct pending_ops {
   //ctx_ack_mes_t *ack_send_buf;
   //write_t **ptrs_to_w_ops; // used for remote writes
   void **ptrs_to_mes_ops; // used for remote proposes
-  ptrs_to_prop_t *ptrs_to_prop;
+  cp_ptrs_to_ops_t *ptrs_to_ops;
 
   trace_t *trace;
   uint32_t trace_iter;
@@ -281,6 +281,7 @@ typedef struct pending_ops {
   //sess_info_t *sess_info;
   bool *stalled;
   uint64_t *inserted_prop_id;
+  uint64_t *inserted_acc_id;
   uint64_t local_w_id;
   uint64_t local_r_id;
   uint32_t *r_session_id;
