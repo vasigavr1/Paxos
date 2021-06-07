@@ -193,8 +193,10 @@ enum {
 #define QP_NUM 4
 #define PROP_QP_ID 0
 #define PROP_REP_QP_ID 1
-#define W_QP_ID 2
-#define ACK_QP_ID 3
+#define ACC_QP_ID 2
+#define ACC_REP_QP_ID 3
+#define CP_COM_QP_ID 4
+#define ACK_QP_ID 5
 
 #define POLL_CQ_R 0
 #define POLL_CQ_W 1

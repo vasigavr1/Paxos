@@ -909,7 +909,7 @@ static inline void increase_credits_when_polling_r_reps(context_t *ctx,
                                                         uint8_t rem_m_id)
 {
   uint16_t *r_credits = ctx->qp_meta[PROP_QP_ID].credits;
-  uint16_t *w_credits = ctx->qp_meta[W_QP_ID].credits;
+  uint16_t *w_credits = ctx->qp_meta[ACC_QP_ID].credits;
   if (!increase_w_credits) {
     if (r_credits[rem_m_id] < PROP_CREDITS)
       r_credits[rem_m_id]++;

@@ -23,8 +23,8 @@
 // PROPOSES
 #define PROP_MES_HEADER (10) // local id + coalesce num + m_id
 #define PROP_SIZE (42 + 2) // l_id 8, RMW_id- 8, ts 5, key 8, log_number 4, opcode 1 + basets 8
-#define PROP_SEND_SIZE (PROP_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
-#define PROP_RECV_SIZE (GRH_SIZE + PROP_SEND_SIZE)
+#define PRP_MES_SIZE (PROP_MES_HEADER + (PROP_SIZE * PROP_COALESCE))
+#define PROP_RECV_SIZE (GRH_SIZE + PRP_MES_SIZE)
 
 #define MAX_PROP_WRS (MESSAGES_IN_BCAST_BATCH)
 #define MAX_RECV_PROP_WRS ((PROP_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
@@ -34,11 +34,12 @@
 #define MAX_PROP_REP_WRS (PROP_CREDITS * REM_MACH_NUM)
 #define PROP_REP_MES_HEADER (11) //l_id 8 , coalesce_num 1, m_id 1, opcode 1 TODO remove opcode
 // PROPOSE REPLIES
-#define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
+#define PROP_REP_LOG_TOO_LOW_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 8, ts 5, log_no - 4,  RMW value, opcode 1
 #define PROP_REP_SMALL_SIZE 9 // lid and opcode
 #define PROP_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
 #define PROP_REP_BASE_TS_STALE_SIZE (9 + TS_TUPLE_SIZE + RMW_VALUE_SIZE)
-#define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //with the base_ts
+#define PROP_REP_ACCEPTED_SIZE (PROP_REP_ONLY_TS_SIZE + 8 + RMW_VALUE_SIZE + TS_TUPLE_SIZE) //lid 8, opcode 1, ts 5, rmw-id 8 + base_ts 5
+#define PROP_REP_SIZE PROP_REP_ACCEPTED_SIZE
 #define PROP_REP_MES_SIZE (PROP_REP_MES_HEADER + (PROP_COALESCE * PROP_REP_ACCEPTED_SIZE)) //Message size of replies to proposes
 #define MAX_RECV_PROP_REP_WRS ((REM_MACH_NUM * PROP_CREDITS))
 #define PROP_REP_RECV_SIZE (GRH_SIZE + PROP_REP_MES_SIZE)
@@ -46,10 +47,30 @@
 
 
 // ACCEPT REPLIES
-#define ACC_REP_SIZE (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
-#define ACC_REP_SMALL_SIZE 9 // lid and opcode
-#define ACC_REP_ONLY_TS_SIZE (9 + TS_TUPLE_SIZE)
-#define ACC_REP_MES_SIZE (PROP_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
+#define ACC_REP_MES_HEADER (PROP_REP_MES_HEADER)
+#define MAX_ACC_REP_WRS (ACC_CREDITS * REM_MACH_NUM)
+#define MAX_RECV_ACC_REP_WRS ((REM_MACH_NUM * ACC_CREDITS))
+#define ACC_REP_SMALL_SIZE (PROP_REP_SMALL_SIZE) // lid and opcode
+#define ACC_REP_ONLY_TS_SIZE (PROP_REP_ONLY_TS_SIZE)
+// TODO refactor the sizes, the biggest accept reply is smaller than the biggest prop-reply (for seen lower accept)
+#define ACC_REP_SIZE PROP_REP_SIZE // (26 + RMW_VALUE_SIZE)  //l_id- 8, RMW_id- 10, ts 5, log_no - 4,  RMW value, opcode 1
+#define ACC_REP_MES_SIZE (ACC_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
+#define ACC_REP_RECV_SIZE (GRH_SIZE + ACC_REP_MES_SIZE)
+
+// ACCEPTS -- ACCEPT coalescing is derived from max write capacity. ACC reps are derived from accept coalescing
+#define ACC_MES_HEADER (10) //l_id 8 , coalesce_num 1
+#define ACC_HEADER (35 + 5 + 4) //original l_id 8 key 8 rmw-id 10, last-committed rmw_id 10, ts 5 log_no 4 opcode 1, val_len 1
+#define ACC_SIZE (ACC_HEADER + RMW_VALUE_SIZE)
+#define ACC_MES_SIZE (ACC_MES_HEADER + (ACC_SIZE * ACC_COALESCE))
+#define ACC_RECV_SIZE (GRH_SIZE + ACC_MES_SIZE)
+
+
+#define MAX_ACC_WRS (MESSAGES_IN_BCAST_BATCH)
+#define MAX_RECV_ACC_WRS ((ACC_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
+
+#define MAX_INCOMING_ACC (MAX_RECV_ACC_WRS * ACC_COALESCE)
+#define ACC_REP_FIFO_SIZE (MAX_INCOMING_ACC)
+
 
 
 // WRITES: Releases, writes, accepts and commits -- all sizes in BYTES
@@ -62,11 +83,7 @@
 #define W_COALESCE (EFFECTIVE_MAX_W_SIZE / W_SIZE)
 #define W_MES_SIZE (W_MES_HEADER + (W_SIZE * W_COALESCE))
 
-// ACCEPTS -- ACCEPT coalescing is derived from max write capacity. ACC reps are derived from accept coalescing
-#define ACCEPT_HEADER (35 + 5 + 4) //original l_id 8 key 8 rmw-id 10, last-committed rmw_id 10, ts 5 log_no 4 opcode 1, val_len 1
-#define ACCEPT_SIZE (ACCEPT_HEADER + RMW_VALUE_SIZE)
-#define ACC_COALESCE (EFFECTIVE_MAX_W_SIZE / ACCEPT_SIZE)
-#define ACC_MES_SIZE (W_MES_HEADER + (ACCEPT_SIZE * ACC_COALESCE))
+
 
 // COMMITS
 #define COMMIT_HEADER (27 + 1)
@@ -91,7 +108,7 @@
 #define W_RECV_SIZE (GRH_SIZE + ALIGNED_W_SEND_SIDE)
 #define W_ENABLE_INLINING ((MAX_W_MES_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
 #define MAX_RECV_W_WRS ((W_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
-#define MAX_W_WRS (MESSAGES_IN_BCAST_BATCH)
+
 #define MAX_INCOMING_W (MAX_RECV_W_WRS * MAX_WRITE_COALESCE)
 
 
@@ -214,7 +231,7 @@ typedef struct rmw_rep_last_committed {
   uint8_t value[RMW_VALUE_SIZE];
   uint64_t rmw_id; //accepted  OR last committed
   uint32_t log_no_or_base_version; // log no for RMW-already-committed/Log-too-low, base_ts.version for proposed/accepted
-  uint8_t base_m_id; // base_ts.m_id used for accepts only
+  uint8_t base_m_id; // base_ts.m_id used in a LowerAcc reply to a propose
 } __attribute__((__packed__)) cp_prop_rep_t;
 
 

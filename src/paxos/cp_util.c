@@ -42,7 +42,7 @@ void cp_static_assert_compile_parameters()
                 W_SEND_SIZE <= MAX_WRITE_SIZE, "");
   static_assert(W_SEND_SIZE <= MTU, "");
 
-  static_assert(PROP_SEND_SIZE <= MTU, "");
+  static_assert(PRP_MES_SIZE <= MTU, "");
   // R_REPS
 //  static_assert(R_REP_SEND_SIZE >= PROP_REP_MES_SIZE &&
 //                R_REP_SEND_SIZE >= ACC_REP_MES_SIZE &&
@@ -69,7 +69,7 @@ void cp_static_assert_compile_parameters()
   static_assert(PROP_REP_ACCEPTED_SIZE == PROP_REP_LOG_TOO_LOW_SIZE + 1, "");
   static_assert(sizeof(struct rmw_rep_last_committed) == PROP_REP_ACCEPTED_SIZE, "");
   static_assert(sizeof(struct rmw_rep_message) == PROP_REP_MES_SIZE, "");
-  static_assert(sizeof(struct accept) == ACCEPT_SIZE, "");
+  static_assert(sizeof(struct accept) == ACC_SIZE, "");
   static_assert(sizeof(struct r_rep_big) == ACQ_REP_SIZE, "");
   static_assert(sizeof(struct commit) == COMMIT_SIZE, "");
   // UD- REQS
@@ -140,7 +140,7 @@ void cp_print_parameters_in_the_start()
     //          sizeof(ctx_ack_mes_ud_t), CTX_ACK_RECV_SIZE);
     //my_printf(yellow, "READ: read %lu/%d, read message %lu/%d, read message ud req %lu/%d\n",
     //          sizeof(struct read), R_SIZE,
-    //          sizeof(struct r_message), PROP_SEND_SIZE,
+    //          sizeof(struct r_message), PRP_MES_SIZE,
     //          sizeof(r_mes_ud_t), PROP_RECV_SIZE);
     //my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
     //          sizeof(write_t), W_SIZE,
@@ -258,7 +258,7 @@ void cp_init_qp_meta(context_t *ctx)
                      MAX_RECV_PROP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
                      PROP_REP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, PROP_BUF_SLOTS,
-                     PROP_RECV_SIZE, PROP_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     PROP_RECV_SIZE, PRP_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
                      PROP_SEND_MCAST_QP, 0, PROP_FIFO_SIZE,
                      PROP_CREDITS, PROP_MES_HEADER,
                      "send props", "recv props");
@@ -273,19 +273,28 @@ void cp_init_qp_meta(context_t *ctx)
                      "send prop_reps", "recv prop_reps");
 
   ///
-  create_per_qp_meta(&qp_meta[W_QP_ID], MAX_W_WRS,
-                     MAX_RECV_W_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
-                     ACK_QP_ID,
-                     REM_MACH_NUM, REM_MACH_NUM, W_BUF_SLOTS,
-                     W_RECV_SIZE, W_SEND_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
-                     W_SEND_MCAST_QP, 0, W_FIFO_SIZE,
-                     W_CREDITS, W_MES_HEADER,
-                     "send writes", "recv writes");
+  create_per_qp_meta(&qp_meta[ACC_QP_ID], MAX_ACC_WRS,
+                     MAX_RECV_ACC_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
+                     ACC_REP_QP_ID,
+                     REM_MACH_NUM, REM_MACH_NUM, ACC_BUF_SLOTS,
+                     ACC_RECV_SIZE, ACC_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     ACC_SEND_MCAST_QP, 0, ACC_FIFO_SIZE,
+                     ACC_CREDITS, ACC_MES_HEADER,
+                     "send accepts", "recv accepts");
+
+  create_per_qp_meta(&qp_meta[ACC_REP_QP_ID], MAX_ACC_REP_WRS,
+                     MAX_RECV_ACC_REP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
+                     ACC_REP_QP_ID,
+                     REM_MACH_NUM, REM_MACH_NUM, ACC_REP_BUF_SLOTS,
+                     ACC_REP_RECV_SIZE, ACC_REP_MES_SIZE, false, false,
+                     0, 0, ACC_REP_FIFO_SIZE,
+                     0, ACC_REP_MES_HEADER,
+                     "send accepts reps", "recv accepts reps");
   ///
 
   ///
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
-                     W_QP_ID, REM_MACH_NUM,
+                     CP_COM_QP_ID, REM_MACH_NUM,
                      REM_MACH_NUM, W_CREDITS);
 }
 
@@ -340,7 +349,7 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
   // W_FIFO
   p_ops->w_fifo = (write_fifo_t *) calloc(1, sizeof(write_fifo_t));
-  fifo_t *w_send_fifo = ctx->qp_meta[W_QP_ID].send_fifo;
+  fifo_t *w_send_fifo = ctx->qp_meta[ACC_QP_ID].send_fifo;
   assert(w_send_fifo->max_byte_size == W_FIFO_SIZE * ALIGNED_W_SEND_SIDE);
   p_ops->w_fifo->w_message = (struct w_message_template *) w_send_fifo->fifo;
     //(struct w_message_template *) calloc((size_t)W_FIFO_SIZE, (size_t) ALIGNED_W_SEND_SIDE);

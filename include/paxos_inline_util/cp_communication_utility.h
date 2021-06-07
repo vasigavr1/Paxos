@@ -49,7 +49,7 @@ static inline int find_how_many_write_messages_can_be_polled(struct ibv_cq *w_re
 static inline void forge_w_wr(uint32_t w_mes_i, context_t *ctx,
                               uint16_t br_i)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[W_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
   struct ibv_sge *send_sgl = qp_meta->send_sgl;
   w_mes_t *w_mes = (w_mes_t *) &p_ops->w_fifo->w_message[w_mes_i];

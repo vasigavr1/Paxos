@@ -187,7 +187,7 @@ static inline void send_props_helper(context_t *ctx)
 static inline void broadcast_writes(context_t *ctx)
 {
   //printf("Worker %d bcasting writes \n", t_id);
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[W_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   per_qp_meta_t *ack_qp_meta = &ctx->qp_meta[ACK_QP_ID];
   per_qp_meta_t *r_rep_qp_meta = &ctx->qp_meta[PROP_REP_QP_ID];
 
@@ -455,7 +455,7 @@ static inline void apply_acks(uint32_t ack_num, uint32_t ack_ptr,
     // If it's a quorum, the request has been completed -- but releases/writes/commits will
     // still hold a slot in the write FIFO until they see expected acks (or timeout)
     if (w_meta->acks_seen == REMOTE_QUORUM) {
-      if (ENABLE_ASSERTIONS) ctx->qp_meta[W_QP_ID].outstanding_messages--;
+      if (ENABLE_ASSERTIONS) ctx->qp_meta[ACC_QP_ID].outstanding_messages--;
 //      printf("Wrkr %d valid ack %u/%u, write at ptr %d is ready \n",
 //         t_id, ack_i, ack_num,  ack_ptr);
       switch(w_state) {
@@ -517,7 +517,7 @@ static inline void poll_acks(context_t *ctx)
     uint64_t pull_lid = p_ops->local_w_id; // l_id at the pull pointer
     uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
     //my_printf(green, "Receiving %u write credits, total %u,  from %u \n ",
-    //          ack->credits, ctx->qp_meta[W_QP_ID].credits[ack->m_id], ack->m_id);
+    //          ack->credits, ctx->qp_meta[ACC_QP_ID].credits[ack->m_id], ack->m_id);
     ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
     // if the pending write FIFO is empty it means the acks are for committed messages.
     if (p_ops->w_size == 0 ) {
@@ -536,7 +536,7 @@ static inline void poll_acks(context_t *ctx)
     // Apply the acks that refer to stored writes
     apply_acks(ack_num, ack_ptr, ack->m_id, l_id,
                pull_lid, ctx);
-    if (ENABLE_ASSERTIONS) assert(ctx->qp_meta[W_QP_ID].credits[ack->m_id] <= W_CREDITS);
+    if (ENABLE_ASSERTIONS) assert(ctx->qp_meta[ACC_QP_ID].credits[ack->m_id] <= W_CREDITS);
     ack->opcode = INVALID_OPCODE;
     ack->ack_num = 0;
   } // while
@@ -545,9 +545,9 @@ static inline void poll_acks(context_t *ctx)
     if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
   }
   else {
-    if (ENABLE_ASSERTIONS && ctx->qp_meta[W_QP_ID].outstanding_messages > 0)
+    if (ENABLE_ASSERTIONS && ctx->qp_meta[ACC_QP_ID].outstanding_messages > 0)
       qp_meta->wait_for_reps_ctr++;
-    if (ENABLE_STAT_COUNTING && ctx->qp_meta[W_QP_ID].outstanding_messages > 0)
+    if (ENABLE_STAT_COUNTING && ctx->qp_meta[ACC_QP_ID].outstanding_messages > 0)
       t_stats[ctx->t_id].stalled_ack++;
   }
   if (ENABLE_ASSERTIONS) assert(qp_meta->recv_info->posted_recvs >= qp_meta->polled_messages);
@@ -617,7 +617,7 @@ _Noreturn static void cp_main_loop(context_t *ctx)
 
     broadcast_writes(ctx);
 
-    poll_for_writes(ctx, W_QP_ID);
+    poll_for_writes(ctx, ACC_QP_ID);
 
     od_send_acks(ctx, ACK_QP_ID);
     inspect_rmws(ctx, ctx->t_id);

@@ -27,6 +27,7 @@
 // one fewer pending write than slots in the w_ifo
 #define MAX_ALLOWED_W_SIZE (PENDING_WRITES - 1)
 #define PROP_FIFO_SIZE (LOCAL_PROP_NUM + 1)
+#define ACC_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define MAX_ALLOWED_R_SIZE (PENDING_READS - 1)
 
 

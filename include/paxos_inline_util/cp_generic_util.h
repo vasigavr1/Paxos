@@ -214,7 +214,7 @@ static inline uint16_t get_write_size_from_opcode(uint8_t opcode) {
       return W_SIZE;
     case ACCEPT_OP:
     case ACCEPT_OP_BIT_VECTOR:
-      return ACCEPT_SIZE;
+      return ACC_SIZE;
     case COMMIT_OP:
     case RMW_ACQ_COMMIT_OP:
       return COMMIT_SIZE;
