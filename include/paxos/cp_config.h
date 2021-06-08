@@ -23,7 +23,9 @@ void cp_stats(stats_ctx_t *ctx);
 #define ACC_CREDITS PROP_CREDITS
 #define PROP_COALESCE 10
 #define ACC_COALESCE PROP_COALESCE
-#define MAX_COALESCE MAX(PROP_COALESCE, ACC_COALESCE)
+#define MAX_PROP_ACC_COALESCE (MAX(PROP_COALESCE, ACC_COALESCE))
+#define COM_COALESCE 10
+#define COM_CREDITS 5
 
 
 #define W_CREDITS 8
@@ -60,6 +62,7 @@ void cp_stats(stats_ctx_t *ctx);
 
 #define PROP_SEND_MCAST_QP 0
 #define ACC_SEND_MCAST_QP 1
+#define COM_SEND_MCAST_QP 2
 
 
 //////////////////////////////////////////////////////

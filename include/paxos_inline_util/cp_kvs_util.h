@@ -15,37 +15,6 @@
 
 
 
-/* ---------------------------------------------------------------------------
-//------------------------------ KVS-specific utility-------------------------
-//---------------------------------------------------------------------------*/
-// returns true if the key was found
-static inline bool search_out_of_epoch_writes(p_ops_t *p_ops,
-                                              struct key *read_key,
-                                              uint16_t t_id, void **val_ptr)
-{
-  struct pending_out_of_epoch_writes *writes = p_ops->p_ooe_writes;
-  uint32_t w_i = writes->pull_ptr;
-  for (uint32_t i = 0; i < writes->size; i++) {
-    if (keys_are_equal(&p_ops->read_info[writes->r_info_ptrs[w_i]].key, read_key)) {
-      *val_ptr = (void*) p_ops->read_info[writes->r_info_ptrs[w_i]].value;
-      //my_printf(red, "Wrkr %u: Forwarding value from out-of-epoch write, read key: ", t_id);
-      //print_key(read_key);
-      //my_printf(red, "write key: "); print_key((struct key*)p_ops->read_info[writes->r_info_ptrs[w_i]].key);
-      //my_printf(red, "capacity: %u, w_push_ptr %u, w_pull_ptr %u, r_info ptr %u \n",
-      //          writes->capacity, writes->w_push_ptr, writes->w_pull_ptr, writes->r_info_ptrs[w_i]);
-      return true;
-    }
-    MOD_INCR(w_i, PENDING_READS);
-  }
-  return false;
-}
-
-
-/* ---------------------------------------------------------------------------
-//------------------------------ KVS------------------------------------------
-//---------------------------------------------------------------------------*/
-
-/*-----------------------------FROM TRACE---------------------------------------------*/
 
 // Handle a local rmw in the KVS
 static inline void KVS_from_trace_rmw(trace_op_t *op,
@@ -97,105 +66,6 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
 }
 
 
-
-
-/*-----------------------------UPDATES---------------------------------------------*/
-
-// Handle a remote release/write or acquire-write the KVS
-static inline void KVS_updates_writes_or_releases_or_acquires(write_t *op,
-                                                              mica_op_t *kv_ptr, uint16_t t_id)
-{
-  //my_printf(red, "received op %u with value %u \n", op->opcode, op->value[0]);
-//  if (ENABLE_ASSERTIONS) assert(op->val_len == kv_ptr->val_len);
-  lock_seqlock(&kv_ptr->seqlock);
-  if (compare_netw_ts_with_ts((struct network_ts_tuple*) &op, &kv_ptr->ts) == GREATER) {
-    update_commit_logs(t_id, kv_ptr->key.bkt, op->version, kv_ptr->value,
-                       op->value, "rem write", LOG_WS);
-    write_kv_ptr_val(kv_ptr, op->value, (size_t) VALUE_SIZE, FROM_REMOTE_WRITE_RELEASE);
-    //printf("Wrote val %u to key %u \n", kv_ptr->value[0], kv_ptr->key.bkt);
-    kv_ptr->ts.m_id = op->m_id;
-    kv_ptr->ts.version = op->version;
-    unlock_seqlock(&kv_ptr->seqlock);
-  } else {
-    unlock_seqlock(&kv_ptr->seqlock);
-    if (ENABLE_STAT_COUNTING) t_stats[t_id].failed_rem_writes++;
-  }
-}
-
-
-
-// Handle a remote RMW accept message in the KVS
-static inline void KVS_updates_accepts(struct accept *acc, mica_op_t *kv_ptr,
-                                       p_ops_t *p_ops,
-                                       uint16_t op_i, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-//    assert(acc->last_registered_rmw_id.id != acc->t_rmw_id ||
-//           acc->last_registered_rmw_id.glob_sess_id != acc->glob_sess_id);
-    assert(acc->ts.version > 0);
-  }
-  // on replying to the accept we may need to send on or more of TS, VALUE, RMW-id, log-no
-  uint64_t rmw_l_id = acc->t_rmw_id;
-  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = acc->log_no;
-  uint64_t l_id = acc->l_id;
-
-  struct w_message *acc_mes = (struct w_message *) p_ops->ptrs_to_mes_headers[op_i];
-  if (ENABLE_ASSERTIONS) check_accept_mes(acc_mes);
-  uint8_t acc_m_id = acc_mes->m_id;
-  uint8_t opcode_for_r_rep = (uint8_t)
-    (acc_mes->opcode == ONLY_ACCEPTS ? ACCEPT_OP : ACCEPT_OP_NO_CREDITS);
-  struct rmw_rep_last_committed *acc_rep =
-    (struct rmw_rep_last_committed *) get_r_rep_ptr(p_ops, l_id, acc_m_id, opcode_for_r_rep,
-                                                    p_ops->coalesce_r_rep[op_i], t_id);
-  acc_rep->l_id = l_id;
-
-  if (DEBUG_RMW) my_printf(green, "Worker %u is handling a remote RMW accept on op %u from m_id %u "
-                             "l_id %u, rmw_l_id %u, glob_ses_id %u, log_no %u, version %u  \n",
-                           t_id, op_i, acc_m_id, l_id, rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, log_no, acc->ts.version);
-  lock_seqlock(&kv_ptr->seqlock);
-  // 1. check if it has been committed
-  // 2. first check the log number to see if it's SMALLER!! (leave the "higher" part after the KVS base_ts is also checked)
-  // Either way fill the reply_rmw fully, but have a specialized flag!
-  if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
-    if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
-      // 3. Check that the TS is higher than the KVS TS, setting the flag accordingly
-      //if (!ts_is_not_greater_than_kvs_ts(kv_ptr, &acc->base_ts, acc_m_id, t_id, acc_rep)) {
-      // 4. If the kv-pair has not been RMWed before grab an entry and ack
-      // 5. Else if log number is bigger than the current one, ack without caring about the ongoing RMWs
-      // 6. Else check the kv_ptr and send a response depending on whether there is an ongoing RMW and what that is
-      acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
-      // if the accepted is going to be acked record its information in the kv_ptr
-      if (acc_rep->opcode == RMW_ACK) {
-        activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
-                         acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                         ENABLE_ASSERTIONS ? "received accept" : NULL);
-        memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
-        //print_treiber_top((struct top *) kv_ptr->last_accepted_value, "Receiving remote accept", green);
-//        my_printf(green, " kv_ptr Last committed log no log_no %u acc logno %u\n",
-//                  kv_ptr->last_committed_log_no, kv_ptr->log_no, acc->log_no);
-//        assign_netw_ts_to_ts(&kv_ptr->base_acc_ts, &acc->base_ts);
-        kv_ptr->base_acc_ts = acc->base_ts;
-      }
-    }
-  }
-  uint64_t number_of_reqs = 0;
-  if (ENABLE_DEBUG_RMW_KV_PTR) {
-    // kv_ptr->dbg->prop_acc_num++;
-    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
-  }
-  check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
-  unlock_seqlock(&kv_ptr->seqlock);
-  if (PRINT_LOGS)
-    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Acc: m_id:%u, rmw_id %lu, glob_sess id: %u, "
-              "version %u, m_id: %u, resp: %u \n",
-            kv_ptr->key.bkt, log_no, number_of_reqs, acc_m_id, rmw_l_id, (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM, acc->ts.version, acc->ts.m_id, acc_rep->opcode);
-  //set_up_rmw_rep_message_size(p_ops, acc_rep->opcode, t_id);
-  p_ops->r_rep_fifo->message_sizes[p_ops->r_rep_fifo->push_ptr]+= get_size_from_opcode(acc_rep->opcode);
-  if (ENABLE_ASSERTIONS) assert(p_ops->r_rep_fifo->message_sizes[p_ops->r_rep_fifo->push_ptr] <= R_REP_SEND_SIZE);
-  finish_r_rep_bookkeeping(p_ops, (struct r_rep_big*) acc_rep, false, acc_m_id, t_id);
-}
-
 // Handle a remote RMW commit message in the KVS
 static inline void KVS_updates_commits(struct commit *com, mica_op_t *kv_ptr,
                                        p_ops_t *p_ops,
@@ -221,46 +91,6 @@ static inline void KVS_updates_commits(struct commit *com, mica_op_t *kv_ptr,
 }
 
 
-/*-----------------------------READ-COMMITTING---------------------------------------------*/
-// Perform the ooe-write after reading TSes
-static inline void KVS_out_of_epoch_writes(r_info_t *r_info, mica_op_t *kv_ptr,
-                                           p_ops_t *p_ops, uint16_t t_id)
-{
-  assert(!TURN_OFF_KITE);
-  lock_seqlock(&kv_ptr->seqlock);
-  rectify_key_epoch_id(r_info->epoch_id, kv_ptr, t_id);
-  // Do the write with the version that has been chosen and has been sent to the rest of the machines
-  // Do *not* attempt to use the present version and overwrite the local kvs, as this would not match with the write that we inserted
-  if (compare_ts(&r_info->ts_to_read, &kv_ptr->ts) == GREATER) {
-    write_kv_ptr_val(kv_ptr, r_info->value, r_info->val_len, FROM_OOE_LOCAL_WRITE);
-    kv_ptr->ts = r_info->ts_to_read;
-  }
-  unlock_seqlock(&kv_ptr->seqlock);
-  if (ENABLE_ASSERTIONS) assert(r_info->ts_to_read.m_id == machine_id);
-
-  p_ops->p_ooe_writes->size--;
-  MOD_INCR(p_ops->p_ooe_writes->pull_ptr, PENDING_READS);
-}
-
-// Handle committing an RMW/write from a response to an acquire or ooe-read
-static inline void KVS_acquire_commits(r_info_t *r_info, mica_op_t *kv_ptr,
-                                       uint16_t op_i, uint16_t t_id)
-{
- if (ENABLE_ASSERTIONS) assert(WRITE_RATIO > 0 || RMW_RATIO > 0);
-  if (DEBUG_RMW)
-    my_printf(green, "Worker %u is handling a remote RMW commit on r_info %u, "
-                "rmw_l_id %u,log_no %u, version %u  \n",
-              t_id, op_i, r_info->rmw_id.id,
-              r_info->log_no, r_info->ts_to_read.version);
-  uint64_t number_of_reqs = 0;
-  commit_rmw(kv_ptr, (void *) r_info, NULL, r_info->opcode == OP_ACQUIRE? FROM_LOCAL_ACQUIRE : FROM_OOE_READ, t_id);
-  if (PRINT_LOGS) {
-    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Acq-RMW: rmw_id %lu, "
-              "version %u, m_id: %u \n",
-            kv_ptr->key.bkt, r_info->log_no, number_of_reqs,  r_info->rmw_id.id,
-            r_info->ts_to_read.version, r_info->ts_to_read.m_id);
-  }
-}
 
 
 /* ---------------------------------------------------------------------------
@@ -304,63 +134,6 @@ static inline void cp_KVS_batch_op_trace(uint16_t op_num,
   }
 }
 
-/* The worker sends the remote writes to be committed with this function*/
-static inline void KVS_batch_op_updates(uint16_t op_num, uint16_t t_id, write_t **writes,
-                                        p_ops_t *p_ops,
-                                        uint32_t pull_ptr, uint32_t max_op_size)
-{
-  uint16_t op_i;	/* I is batch index */
-
-  if (ENABLE_ASSERTIONS) assert(op_num <= MAX_INCOMING_W);
-  unsigned int bkt[MAX_INCOMING_W];
-  struct mica_bkt *bkt_ptr[MAX_INCOMING_W];
-  unsigned int tag[MAX_INCOMING_W];
-  mica_op_t *kv_ptr[MAX_INCOMING_W];	/* Ptr to KV item in log */
-  /*
-     * We first lookup the key in the datastore. The first two @I loops work
-     * for both GETs and PUTs.
-     */
-  for(op_i = 0; op_i < op_num; op_i++) {
-    write_t *op = writes[(pull_ptr + op_i) % max_op_size];
-    KVS_locate_one_bucket(op_i, bkt, &op->key, bkt_ptr, tag, kv_ptr, KVS);
-  }
-  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
-
-  // the following variables used to validate atomicity between a lock-free r_rep of an object
-  for(op_i = 0; op_i < op_num; op_i++) {
-    write_t *write =  writes[(pull_ptr + op_i) % max_op_size];
-    if (unlikely (write->opcode == OP_RELEASE_BIT_VECTOR)) continue;
-    if (ENABLE_ASSERTIONS && kv_ptr[op_i] == NULL) { assert(false);}
-      /* We had a tag match earlier. Now compare log entry. */
-      bool key_found = memcmp(&kv_ptr[op_i]->key, &write->key, KEY_SIZE) == 0;
-      if (likely(key_found)) { //Cache Hit
-        if (write->opcode == KVS_OP_PUT || write->opcode == OP_RELEASE ||
-            write->opcode == OP_ACQUIRE) {
-          assert(write->opcode != OP_ACQUIRE);
-          KVS_updates_writes_or_releases_or_acquires(write, kv_ptr[op_i], t_id);
-        }
-        else if (ENABLE_RMWS) {
-          if (write->opcode == ACCEPT_OP) {
-            KVS_updates_accepts((struct accept*) write, kv_ptr[op_i], p_ops, op_i, t_id);
-          }
-          else if (write->opcode == COMMIT_OP || write->opcode == COMMIT_OP_NO_VAL) {
-            KVS_updates_commits((struct commit*) write, kv_ptr[op_i], p_ops, op_i, t_id);
-          }
-          else if (ENABLE_ASSERTIONS) {
-            my_printf(red, "Wrkr %u, kvs batch update: wrong opcode in kvs: %d, req %d, "
-                        "m_id %u, val_len %u, version %u , \n",
-                      t_id, write->opcode, op_i, write->m_id,
-                      write->val_len, write->version);
-            assert(false);
-          }
-        }
-        else if (ENABLE_ASSERTIONS) assert(false);
-      }
-      else {  //Cache miss --> We get here if either tag or log key match failed
-        if (ENABLE_ASSERTIONS) assert(false);
-      }
-  }
-}
 
 
 static inline void cp_KVS_batch_op_props(context_t *ctx)
@@ -436,73 +209,40 @@ static inline void cp_KVS_batch_op_accs(context_t *ctx)
   }
 }
 
-
-
-// Send an isolated write to the kvs-no batching
-static inline void KVS_isolated_op(int t_id, write_t *write)
+static inline void cp_KVS_batch_op_coms(context_t *ctx)
 {
-  int j;	/* I is batch index */
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_com = p_ops->ptrs_to_ops;
+  cp_com_t **coms = (cp_com_t **) ptrs_to_com->ptr_to_ops;
+  uint16_t op_num = ptrs_to_com->polled_ops;
+  uint16_t op_i;
 
-  unsigned int bkt;
-  struct mica_bkt *bkt_ptr;
-  unsigned int tag;
-  mica_op_t *kv_ptr;	/* Ptr to KV item in log */
+  if (ENABLE_ASSERTIONS) {
+    assert(coms != NULL);
+    assert(op_num <= MAX_INCOMING_COM);
+  }
+  unsigned int bkt[MAX_INCOMING_COM];
+  struct mica_bkt *bkt_ptr[MAX_INCOMING_COM];
+  unsigned int tag[MAX_INCOMING_COM];
+  mica_op_t *kv_ptr[MAX_INCOMING_COM];	/* Ptr to KV item in log */
   /*
-   * We first lookup the key in the datastore. The first two @I loops work
-   * for both GETs and PUTs.
-   */
-//  trace_op_t *op = (trace_op_t*) (((void *) write) - 3);
-  //print_key((struct key *) write->key);
-  //printf("op bkt %u\n", op->key.bkt);
-  bkt = write->key.bkt & KVS->bkt_mask;
-  bkt_ptr = &KVS->ht_index[bkt];
-  tag = write->key.tag;
-  kv_ptr = NULL;
-
-  for(j = 0; j < 8; j++) {
-    if(bkt_ptr->slots[j].in_use == 1 &&
-       bkt_ptr->slots[j].tag == tag) {
-      uint64_t log_offset = bkt_ptr->slots[j].offset &
-                            KVS->log_mask;
-      /*
-               * We can interpret the log entry as mica_op, even though it
-               * may not contain the full MICA_MAX_VALUE value.
-               */
-      kv_ptr = (mica_op_t *) &KVS->ht_log[log_offset];
-      /* Detect if the head has wrapped around for this index entry */
-      if(KVS->log_head - bkt_ptr->slots[j].offset >= KVS->log_cap) {
-        kv_ptr = NULL;	/* If so, we mark it "not found" */
-      }
-      break;
-    }
+     * We first lookup the key in the datastore. The first two @I loops work
+     * for both GETs and PUTs.
+     */
+  for(op_i = 0; op_i < op_num; op_i++) {
+    KVS_locate_one_bucket(op_i, bkt, &coms[op_i]->key , bkt_ptr, tag, kv_ptr, KVS);
   }
+  KVS_locate_all_kv_pairs(op_num, tag, bkt_ptr, kv_ptr, KVS);
 
-  // the following variables used to validate atomicity between a lock-free r_rep of an object
-  if(kv_ptr != NULL) {
-    /* We had a tag match earlier. Now compare log entry. */
-    bool key_found = memcmp(&kv_ptr->key, &write->key, KEY_SIZE) == 0;
-    if(key_found) { //Cache Hit
-      if (ENABLE_ASSERTIONS) {
-        if (write->opcode != OP_RELEASE) {
-          my_printf(red, "Wrkr %u: KVS_isolated_op: wrong opcode : %d, m_id %u, val_len %u, version %u , \n",
-                    t_id, write->opcode,  write->m_id,
-                    write->val_len, write->version);
-          assert(false);
-        }
-      }
-      //my_printf(red, "op val len %d in ptr %d, total ops %d \n", op->val_len, (w_pull_ptr + I) % max_op_size, op_num );
-      ts_tuple_t base_ts = {write->m_id, write->version};
-      write_kv_if_conditional_on_ts(kv_ptr, write->value,
-                                    (size_t) VALUE_SIZE, FROM_ISOLATED_OP,
-                                    base_ts);
-    }
+  for(op_i = 0; op_i < op_num; op_i++) {
+    od_KVS_check_key(kv_ptr[op_i], coms[op_i]->key, op_i);
+    cp_com_t *com = coms[op_i];
+    if (ENABLE_ASSERTIONS) assert(com->opcode == COMMIT_OP);
+    print_on_remote_com(com, op_i, ctx->t_id);
+    commit_rmw(kv_ptr[op_i], (void*) com, NULL, FROM_REMOTE_COMMIT, ctx->t_id);
+    print_log_remote_com(com, ptrs_to_com->ptr_to_mes[op_i], kv_ptr[op_i], ctx->t_id);
   }
-  else {  //Cache miss --> We get here if either tag or log key match failed
-    if (ENABLE_ASSERTIONS) assert(false);
-  }
-
-
-
 }
+
 
 #endif //CP_KVS_UTILITY_H

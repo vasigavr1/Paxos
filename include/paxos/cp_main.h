@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <stdint-gcc.h>
+#include <od_fifo.h>
 #include "od_city.h"
 #include "cp_config.h"
 #include "cp_messages.h"
@@ -21,6 +22,7 @@
 #define PENDING_WRITES MAX((PENDING_WRITES_) , ((W_CREDITS * MAX_MES_IN_WRITE) + 1))
 #define W_FIFO_SIZE (PENDING_WRITES + LOCAL_PROP_NUM) // Accepts use the write fifo
 
+
 // The w_fifo needs to have a safety slot that cannot be touched
 // such that the fifo push ptr can never coincide with its pull ptr
 // zeroing its coalesce_num, as such we take care to allow
@@ -28,6 +30,8 @@
 #define MAX_ALLOWED_W_SIZE (PENDING_WRITES - 1)
 #define PROP_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define ACC_FIFO_SIZE (LOCAL_PROP_NUM + 1)
+#define COM_FIFO_SIZE (LOCAL_PROP_NUM + 1)
+#define COM_ROB_SIZE (LOCAL_PROP_NUM + 1)
 #define MAX_ALLOWED_R_SIZE (PENDING_READS - 1)
 
 
@@ -67,14 +71,7 @@ typedef struct w_mes_info {
   bool sent;
 } w_mes_info_t;
 
-//
-struct read_fifo {
-  struct r_message_template *r_message;
-  uint32_t push_ptr;
-  uint32_t bcast_pull_ptr;
-  uint32_t bcast_size; // number of reads not messages!
-  r_mes_info_t info[PROP_FIFO_SIZE];
-};
+
 
 //
 typedef struct write_fifo {
@@ -85,16 +82,7 @@ typedef struct write_fifo {
   w_mes_info_t info[W_FIFO_SIZE];
 } write_fifo_t;
 
-//
-struct r_rep_fifo {
-  struct r_rep_message_template *r_rep_message;
-  uint8_t *rem_m_id;
-  uint16_t *message_sizes;
-  uint32_t push_ptr;
-  uint32_t pull_ptr;
-  uint32_t total_size; // number of r_reps not messages!
-  uint32_t mes_size; // number of messages
-};
+
 
 
 //
@@ -237,6 +225,13 @@ typedef struct per_write_meta {
   uint32_t sess_id;
 } per_write_meta_t;
 
+typedef struct cp_com_rob {
+  uint64_t l_id; // for debug
+  uint16_t sess_id; // connection with loc entry
+  uint8_t state;
+  uint8_t acks_seen;
+} cp_com_rob_t;
+
 struct pending_out_of_epoch_writes {
   uint32_t size; //number of pending ooe writes
   uint32_t push_ptr;
@@ -256,11 +251,8 @@ typedef struct cp_ptr_to_ops {
 
 typedef struct pending_ops {
 	write_fifo_t *w_fifo;
-  struct read_fifo *r_fifo;
-  struct r_rep_fifo *r_rep_fifo;
-  //ctx_ack_mes_t *ack_send_buf;
-  //write_t **ptrs_to_w_ops; // used for remote writes
-  void **ptrs_to_mes_ops; // used for remote proposes
+
+  fifo_t *com_rob;
   cp_ptrs_to_ops_t *ptrs_to_ops;
 
   trace_t *trace;
@@ -282,6 +274,9 @@ typedef struct pending_ops {
   bool *stalled;
   uint64_t *inserted_prop_id;
   uint64_t *inserted_acc_id;
+  uint64_t *inserted_com_id;
+  uint64_t applied_com_id;
+
   uint64_t local_w_id;
   uint64_t local_r_id;
   uint32_t *r_session_id;

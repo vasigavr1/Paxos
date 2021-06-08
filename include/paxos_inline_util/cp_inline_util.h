@@ -148,6 +148,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
                     t_id, loc_entry->sess_id);
         }
         insert_write(p_ops, (trace_op_t*) entry_to_commit, FROM_COMMIT, state, t_id);
+        cp_com_insert(ctx, loc_entry, state);
         loc_entry->state = COMMITTED;
         continue;
       }
@@ -189,7 +190,10 @@ static inline void send_accs_helper(context_t *ctx)
 }
 
 
-
+static inline void cp_send_coms_helper(context_t *ctx)
+{
+  send_com_checks(ctx);
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -206,6 +210,11 @@ static inline void cp_acc_rep_helper(context_t *ctx)
   send_rmw_rep_checks(ctx, ACC_REP_QP_ID);
 }
 
+
+static inline void cp_send_ack_helper(context_t *ctx)
+{
+
+}
 
 /* ---------------------------------------------------------------------------
 //------------------------------ POLLING-------------------------------------
@@ -297,179 +306,54 @@ static inline bool cp_acc_rep_recv_handler(context_t* ctx)
   return true;
 }
 
-// Poll for the write broadcasts
-static inline void poll_for_writes(context_t *ctx,
-                                   uint16_t qp_id)
+static inline bool cp_com_recv_handler(context_t* ctx)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  ctx_ack_mes_t *acks = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo;
-  uint32_t writes_for_kvs = 0;
-  int completed_messages =
-    find_how_many_messages_can_be_polled(qp_meta->recv_cq, qp_meta->recv_wc,
-                                         &qp_meta->completed_but_not_polled,
-                                         qp_meta->recv_buf_slot_num, ctx->t_id);
-  if (completed_messages <= 0) return;
+  volatile cp_com_mes_ud_t *incoming_coms = (volatile cp_com_mes_ud_t *) recv_fifo->fifo;
+  cp_com_mes_t *com_mes = (cp_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com_mes;
 
-  qp_meta->polled_messages = 0;
-  // Start polling
-  while (qp_meta->polled_messages < completed_messages) {
-    volatile w_mes_ud_t *incoming_ws = (volatile w_mes_ud_t *) qp_meta->recv_fifo->fifo;
-    w_mes_t *w_mes = (w_mes_t *) &incoming_ws[recv_fifo->pull_ptr].w_mes;
-    check_the_polled_write_message(w_mes, recv_fifo->pull_ptr, writes_for_kvs, ctx->t_id);
-    print_polled_write_message_info(w_mes, recv_fifo->pull_ptr, ctx->t_id);
-    uint8_t w_num = w_mes->coalesce_num;
-    check_state_with_allowed_flags(4, w_mes->opcode, ONLY_WRITES, ONLY_ACCEPTS, WRITES_AND_ACCEPTS);
-    bool is_only_accepts = w_mes->opcode == ONLY_ACCEPTS;
+  check_when_polling_for_coms(ctx, com_mes);
 
+  uint8_t coalesce_num = com_mes->coalesce_num;
+  bool can_send_acks = ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  com_mes->l_id, com_mes->m_id);
+  if (!can_send_acks) return false;
 
-    uint8_t writes_to_be_acked = 0, accepts = 0;
-    uint32_t running_writes_for_kvs = writes_for_kvs;
-    uint16_t byte_ptr = W_MES_HEADER;
-    for (uint16_t i = 0; i < w_num; i++) {
-      write_t *write = (write_t *)(((void *)w_mes) + byte_ptr);
-      byte_ptr += get_write_size_from_opcode(write->opcode);
-      check_a_polled_write(write, i, w_num, w_mes->opcode, ctx->t_id);
-      handle_configuration_on_receiving_rel(write, ctx->t_id);
-      if (ENABLE_ASSERTIONS) assert(write->opcode != ACCEPT_OP_BIT_VECTOR);
+  cp_ptrs_to_ops_t *ptrs_to_com = p_ops->ptrs_to_ops;
+  if (qp_meta->polled_messages == 0) ptrs_to_com->polled_ops = 0;
 
-      if (write->opcode != NO_OP_RELEASE) {
-        p_ops->ptrs_to_mes_ops[running_writes_for_kvs] = (void *) write; //(((void *) write) - 3); // align with trace_op
-        if (write->opcode == ACCEPT_OP) {
-          p_ops->ptrs_to_mes_headers[running_writes_for_kvs] = (struct r_message *) w_mes;
-          p_ops->coalesce_r_rep[running_writes_for_kvs] = accepts > 0;
-          raise_conf_bit_if_accept_signals_it((struct accept *) write, w_mes->m_id, ctx->t_id);
-        }
-        if (PRINT_LOGS && write->opcode == COMMIT_OP) {
-          p_ops->ptrs_to_mes_headers[running_writes_for_kvs] = (struct r_message *) w_mes;
-        }
-        running_writes_for_kvs++;
-      }
-      if (write->opcode != ACCEPT_OP) writes_to_be_acked++;
-      else accepts++;
-    }
-
-    if (ENABLE_ASSERTIONS) assert(accepts + writes_to_be_acked == w_num);
-    // Make sure the writes of the message can be processed
-    if (!is_only_accepts) {
-      if (ENABLE_ASSERTIONS) assert(writes_to_be_acked > 0);
-      if (!ctx_ack_insert(ctx, ACK_QP_ID, writes_to_be_acked, w_mes->l_id, w_mes->m_id)) {
-
-        //if (DEBUG_QUORUM)
-         // my_printf(yellow, "Wrkr %u leaves %u messages for the next polling round \n",
-         //               t_id, *completed_but_not_polled);
-        break;
-      }
-    }
-    else if (ENABLE_ASSERTIONS) assert(w_mes->l_id == 0);
-
-    writes_for_kvs = running_writes_for_kvs;
-    count_stats_on_receiving_w_mes_reset_w_num(w_mes, w_num, ctx->t_id);
-    fifo_incr_pull_ptr(recv_fifo);
-    qp_meta->polled_messages++;
+  for (uint16_t i = 0; i < coalesce_num; i++) {
+    cp_com_t *com = &com_mes->com[i];
+    check_state_with_allowed_flags(2, com->opcode, COMMIT_OP);
+    ptrs_to_com->ptr_to_ops[ptrs_to_com->polled_ops] = (void *) com;
+    ptrs_to_com->ptr_to_mes[ptrs_to_com->polled_ops] = (void *) com_mes;
+    ptrs_to_com->polled_ops++;
   }
-  qp_meta->completed_but_not_polled = completed_messages - qp_meta->polled_messages;
-  qp_meta->recv_info->posted_recvs -= qp_meta->polled_messages;
-
-  if (writes_for_kvs > 0) {
-    if (DEBUG_WRITES) my_printf(yellow, "Worker %u is going with %u writes to the kvs \n", ctx->t_id, writes_for_kvs);
-    KVS_batch_op_updates((uint16_t) writes_for_kvs, ctx->t_id, (write_t **) p_ops->ptrs_to_mes_ops,
-                         p_ops, 0, (uint32_t) MAX_INCOMING_W);
-    if (DEBUG_WRITES) my_printf(yellow, "Worker %u propagated %u writes to the kvs \n", ctx->t_id, writes_for_kvs);
-  }
+  return true;
 }
 
-
-
-
-
-
-// Apply the acks that refer to stored writes
-static inline void apply_acks(uint32_t ack_num, uint32_t ack_ptr,
-                              uint8_t ack_m_id,
-                              uint64_t l_id, uint64_t pull_lid,
-                              context_t *ctx)
+inline bool cp_ack_recv_handler(context_t *ctx)
 {
-  //per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  for (uint16_t ack_i = 0; ack_i < ack_num; ack_i++) {
-    //printf("Checking my acks \n");
-    check_ack_and_print(p_ops, ack_i, ack_ptr, ack_num, l_id, pull_lid, ctx->t_id);
-    per_write_meta_t *w_meta = &p_ops->w_meta[ack_ptr];
-    w_meta->acks_seen++;
-    bool ack_m_id_found = false;
-    if (ENABLE_ASSERTIONS) assert(w_meta->acks_expected >= REMOTE_QUORUM);
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  volatile ctx_ack_mes_ud_t *incoming_acks = (volatile ctx_ack_mes_ud_t *) recv_fifo->fifo;
+  ctx_ack_mes_t *ack = (ctx_ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
 
-    for (uint8_t i = 0; i < w_meta->acks_expected; i++) {
-      if (ack_m_id == w_meta->expected_ids[i]) {
-        ack_m_id_found = true;
-        w_meta->seen_expected[i] = true;
-        break;
-      }
-    }
-    if (w_meta->w_state == SENT_PUT || w_meta->w_state == SENT_COMMIT ||
-        w_meta->w_state == SENT_RELEASE) {
-      if (!ack_m_id_found) {
-        my_printf(red, "Wrkr %u, ack_ptr %u/%u received ack from m_i %u, state %u, received/expected %u/%u "
-                    "active-machines/acks-seen: \n",
-                  ctx->t_id, ack_ptr, PENDING_WRITES, ack_m_id,
-                  w_meta->w_state, w_meta->acks_seen, w_meta->acks_expected);
-        for (uint8_t i = 0; i < w_meta->acks_expected; i++) {
-          my_printf(red, "%u/%u \n", w_meta->expected_ids[i], w_meta->seen_expected[i]);
-        }
-        if (!ENABLE_MULTICAST) assert(ack_m_id_found);
-        else {
-          MOD_INCR(ack_ptr, PENDING_WRITES);
-          continue;
-        }
-      }
-    }
+  ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
 
+  if (od_is_ack_too_old(ack, p_ops->com_rob, p_ops->applied_com_id;))
+    return true;
 
-    uint8_t w_state = w_meta->w_state;
-//    printf("Wrkr %d valid ack %u/%u, from %u write at ptr %d is %u/%u \n",
-//           t_id, ack_i, ack_num, ack_m_id, ack_ptr,
-//           w_meta->acks_seen, w_meta->acks_expected);
-
-    // If it's a quorum, the request has been completed -- but releases/writes/commits will
-    // still hold a slot in the write FIFO until they see expected acks (or timeout)
-    if (w_meta->acks_seen == REMOTE_QUORUM) {
-      if (ENABLE_ASSERTIONS) ctx->qp_meta[ACC_QP_ID].outstanding_messages--;
-//      printf("Wrkr %d valid ack %u/%u, write at ptr %d is ready \n",
-//         t_id, ack_i, ack_num,  ack_ptr);
-      switch(w_state) {
-        case SENT_PUT : break;
-        case SENT_RELEASE:
-          clear_after_release_quorum(p_ops, ack_ptr, ctx->t_id);
-          break;
-        case SENT_COMMIT:
-          act_on_quorum_of_commit_acks(p_ops, ack_ptr, ctx->t_id);
-          break;
-          // THE FOLLOWING ARE WAITING FOR A QUORUM
-        case SENT_ACQUIRE:
-        case SENT_RMW_ACQ_COMMIT:
-        case SENT_BIT_VECTOR:
-        case SENT_NO_OP_RELEASE:
-          p_ops->w_meta[ack_ptr].w_state += W_STATE_OFFSET;
-          break;
-        default:
-          if (w_state >= READY_PUT && w_state <= READY_NO_OP_RELEASE)
-            break;
-          my_printf(red, "Wrkr %u state %u, ptr %u \n", ctx->t_id, w_state, ack_ptr);
-          assert(false);
-      }
-    }
-
-    // Free writes/releases/commits
-    if (w_meta->acks_seen == w_meta->acks_expected) {
-      //assert(w_meta->acks_seen == REM_MACH_NUM);
-      if (complete_requests_that_wait_all_acks(&w_meta->w_state, ack_ptr, ctx->t_id))
-        update_sess_info_with_fully_acked_write(p_ops, ack_ptr, ctx->t_id);
-    }
-    MOD_INCR(ack_ptr, PENDING_WRITES);
-  }
+  cp_apply_acks(ctx, ack);
+  return true;
 }
+
+
+
+
+
 
 // Worker polls for acks
 static inline void poll_acks(context_t *ctx)
@@ -592,27 +476,16 @@ _Noreturn static void cp_main_loop(context_t *ctx)
 
     batch_requests_to_KVS(ctx);
     ctx_send_broadcasts(ctx, PROP_QP_ID);
-    ctx_poll_incoming_messages(ctx, PROP_QP_ID);
+    for (uint16_t qp_i = 0; qp_i < QP_NUM; qp_i ++)
+      ctx_poll_incoming_messages(ctx, qp_i);
+
     ctx_send_unicasts(ctx, PROP_REP_QP_ID);
-
-    ctx_send_broadcasts(ctx, ACC_QP_ID);
-    ctx_poll_incoming_messages(ctx, ACC_QP_ID);
     ctx_send_unicasts(ctx, ACC_REP_QP_ID);
-
-
-    broadcast_writes(ctx);
-
-
     od_send_acks(ctx, ACK_QP_ID);
+
     inspect_rmws(ctx, ctx->t_id);
-
-    poll_acks(ctx);
-
-    // Get a new batch from the trace, pass it through the kvs and create
-    // the appropriate write/r_rep messages
-
-
-
+    ctx_send_broadcasts(ctx, ACC_QP_ID);
+    ctx_send_broadcasts(ctx, COM_QP_ID);
   }
 }
 

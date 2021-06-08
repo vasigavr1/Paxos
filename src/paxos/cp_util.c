@@ -265,6 +265,14 @@ void cp_qp_meta_mfs(context_t *ctx)
   mfs[ACC_REP_QP_ID].send_helper = cp_acc_rep_helper;
   mfs[ACC_REP_QP_ID].recv_handler = cp_acc_rep_recv_handler;
 
+  mfs[COM_QP_ID].insert_helper = cp_insert_com_help;
+  mfs[COM_QP_ID].send_helper = cp_send_coms_helper;
+  mfs[COM_QP_ID].recv_handler = cp_com_recv_handler;
+  mfs[COM_QP_ID].recv_kvs = cp_KVS_batch_op_coms;
+
+  mfs[COM_QP_ID].send_helper = cp_send_ack_helper;
+  mfs[COM_QP_ID].recv_handler = cp_ack_recv_handler;
+
   ctx_set_qp_meta_mfs(ctx, mfs);
   free(mfs);
 }
@@ -301,18 +309,27 @@ void cp_init_qp_meta(context_t *ctx)
                      "send accepts", "recv accepts");
 
   create_per_qp_meta(&qp_meta[ACC_REP_QP_ID], MAX_ACC_REP_WRS,
-                     MAX_RECV_ACC_REP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
-                     ACC_REP_QP_ID,
+                     MAX_RECV_ACC_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
+                     ACC_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, ACC_REP_BUF_SLOTS,
                      ACC_REP_RECV_SIZE, ACC_REP_MES_SIZE, false, false,
                      0, 0, ACC_REP_FIFO_SIZE,
                      0, RMW_REP_MES_HEADER,
                      "send accepts reps", "recv accepts reps");
+
+  create_per_qp_meta(&qp_meta[COM_QP_ID], MAX_COM_WRS,
+                     MAX_RECV_COM_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
+                     ACK_QP_ID,
+                     REM_MACH_NUM, REM_MACH_NUM, COM_BUF_SLOTS,
+                     COM_RECV_SIZE, COM_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
+                     COM_SEND_MCAST_QP, 0, COM_FIFO_SIZE,
+                     COM_CREDITS, COM_MES_HEADER,
+                     "send commits", "recv commits");
   ///
 
   ///
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
-                     CP_COM_QP_ID, REM_MACH_NUM,
+                     COM_QP_ID, REM_MACH_NUM,
                      REM_MACH_NUM, W_CREDITS);
 
   cp_qp_meta_mfs(ctx);
@@ -352,11 +369,16 @@ void cp_init_loc_entry(p_ops_t *p_ops, uint16_t t_id)
 p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 {
   uint32_t pending_reads = (uint32_t) PENDING_READS;
-  uint32_t pending_writes = (uint32_t) PENDING_WRITES;
+
+
   p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
+
+  p_ops->com_rob = fifo_constructor(COM_ROB_SIZE, sizeof(cp_com_rob_t),
+                                    false, 0, 1);
 
   p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
   p_ops->inserted_acc_id = calloc(MACHINE_NUM, sizeof(uint64_t));
+  p_ops->inserted_com_id = calloc(MACHINE_NUM, sizeof(uint64_t));
   p_ops->ptrs_to_ops = calloc(1, sizeof(cp_ptrs_to_ops_t));
 
   uint32_t max_incoming_ops = MAX(MAX_INCOMING_PROP, MAX_INCOMING_ACC);
@@ -367,13 +389,17 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   cp_init_loc_entry(p_ops, ctx->t_id);
   p_ops->stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
 
+  for (uint32_t i = 0; i < COM_ROB_SIZE; i++) {
+    cp_com_rob_t *com_rob = get_fifo_slot(p_ops->com_rob, i);
+    com_rob->com_state = INVALID;
+  }
+
 
 // TODO delete
   p_ops->r_session_id = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-  p_ops->w_index_to_req_array = (uint32_t *) calloc(pending_writes, sizeof(uint32_t));
   p_ops->r_index_to_req_array = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
   p_ops->read_info = (r_info_t *) calloc(pending_reads, sizeof(r_info_t));
-  p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
+  //p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
 
 
   p_ops->ops = (trace_op_t *) calloc(MAX_OP_BATCH, sizeof(trace_op_t));

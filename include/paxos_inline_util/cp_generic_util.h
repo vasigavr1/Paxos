@@ -431,4 +431,15 @@ static inline void cp_acc_insert(context_t *ctx,
                 helping, 0);
 }
 
+static inline void cp_com_insert(context_t *ctx,
+                                 loc_entry_t *loc_entry,
+                                 uint32_t state)
+{
+  od_insert_mes(ctx, COM_QP_ID,
+                (uint32_t) COM_SIZE,
+                1,
+                false, loc_entry,
+                state, 0);
+}
+
 #endif //CP_GENERIC_UTILITY_H

@@ -281,6 +281,42 @@ static inline void send_acc_checks(context_t *ctx)
 }
 
 
+static inline void send_com_checks(context_t *ctx)
+{
+  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  fifo_t *send_fifo = qp_meta->send_fifo;
+
+  // Create the broadcast messages
+  cp_com_mes_t *com_buf = (cp_com_mes_t *) qp_meta->send_fifo->fifo;
+  cp_com_mes_t *com_mes = &com_buf[send_fifo->pull_ptr];
+
+  slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
+  uint8_t coalesce_num = (uint8_t) slot_meta->coalesce_num;
+  if (ENABLE_ASSERTIONS) {
+    assert(send_fifo->net_capacity >= coalesce_num);
+    qp_meta->outstanding_messages += coalesce_num;
+    assert(com_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
+    assert(com_mes->coalesce_num > 0);
+    assert(com_mes->m_id == (uint8_t) ctx->m_id);
+
+    if (DEBUG_RMW) {
+      cp_com_t *com = &com_mes->com[0];
+      my_printf(green, "Wrkr %u : I BROADCAST a commit message %u with %u coms with mes_size %u, with credits: %d, lid: %u, "
+                       "rmw_id %u, glob_sess id %u, log_no %u, base version %u \n",
+                ctx->t_id, com->opcode, coalesce_num, slot_meta->byte_size,
+                qp_meta->credits[(machine_id + 1) % MACHINE_NUM], com_mes->l_id,
+                com->t_rmw_id, com->t_rmw_id % GLOBAL_SESSION_NUM,
+                com->log_no, com->base_ts.version);
+    }
+
+  }
+  if (ENABLE_STAT_COUNTING) {
+    t_stats[ctx->t_id].accepts_sent++;
+  }
+}
+
+
 static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
 {
   if (!ENABLE_ASSERTIONS) return;
@@ -819,27 +855,32 @@ static inline void check_ack_message_count_stats(p_ops_t* p_ops, ctx_ack_mes_t* 
 
 
 // When polling acks: more precisely when inspecting each l_id acked
-static inline void  check_ack_and_print(p_ops_t* p_ops, uint16_t ack_i, uint32_t ack_ptr,
-                                        uint16_t  ack_num, uint64_t l_id, uint64_t pull_lid, uint16_t t_id) {
+static inline void  cp_check_ack_and_print(context_t *ctx,
+                                           cp_com_rob_t *com_rob,
+                                           ctx_ack_mes_t *ack,
+                                           uint16_t ack_i,
+                                           uint32_t ack_ptr,
+                                           uint16_t  ack_num)
+{
   if (ENABLE_ASSERTIONS) {
-    if (DEBUG_WRITES && (ack_ptr == p_ops->w_push_ptr)) {
-      uint32_t origin_ack_ptr = (ack_ptr - ack_i + PENDING_WRITES) % PENDING_WRITES;
-      my_printf(red, "Worker %u: Origin ack_ptr %u/%u, acks %u/%u, w_pull_ptr %u, w_push_ptr % u, w_size %u \n",
-                t_id, origin_ack_ptr, (p_ops->w_pull_ptr + (l_id - pull_lid)) % PENDING_WRITES,
-                ack_i, ack_num, p_ops->w_pull_ptr, p_ops->w_push_ptr, p_ops->w_size);
+    p_ops_t* p_ops = (p_ops_t*) ctx->appl_ctx;
+    per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
+    uint64_t pull_lid = p_ops->applied_com_id;
+    if (ENABLE_ASSERTIONS && (ack_ptr == p_ops->com_rob->push_ptr)) {
+      uint32_t origin_ack_ptr = (uint32_t) (ack_ptr - ack_i + COM_ROB_SIZE) % COM_ROB_SIZE;
+      my_printf(red, "Origin ack_ptr %u/%u, acks %u/%u, pull_ptr %u, push_ptr % u, capacity %u \n",
+                origin_ack_ptr, (p_ops->com_rob->pull_ptr + (ack->l_id - pull_lid)) % COM_ROB_SIZE,
+                ack_i, ack_num, p_ops->com_rob->pull_ptr, p_ops->com_rob->push_ptr, p_ops->com_rob->capacity);
+    }
 
+    assert((com_rob->l_id % p_ops->com_rob->max_size) == ack_ptr);
+    if (com_rob->acks_seen == REMOTE_QUORUM) {
+      qp_meta->outstanding_messages--;
+      assert(com_rob->state == SENT_COMMIT);
+      if (DEBUG_ACKS)
+        printf("Worker %d, sess %u: valid ack %u/%u com at ptr %d is ready \n",
+               ctx->t_id, com_rob->sess_id, ack_i, ack_num,  ack_ptr);
     }
-    if (p_ops->w_meta[ack_ptr].acks_seen >= REM_MACH_NUM) {
-      uint32_t origin_ack_ptr = (ack_ptr - ack_i + PENDING_WRITES) % PENDING_WRITES;
-      my_printf(red, "Worker %u: acks seen %u/%d, w_state %u, max_pending _writes %d,"
-                  "Origin ack_ptr %u/%u, acks %u/%u, w_pull_ptr %u, w_push_ptr % u, w_size %u \n",
-                t_id, p_ops->w_meta[ack_ptr].acks_seen, REM_MACH_NUM,
-                p_ops->w_meta[ack_ptr].w_state,
-                PENDING_WRITES,
-                origin_ack_ptr, (p_ops->w_pull_ptr + (l_id - pull_lid)) % PENDING_WRITES,
-                ack_i, ack_num, p_ops->w_pull_ptr, p_ops->w_push_ptr, p_ops->w_size);
-    }
-    assert(p_ops->w_meta[ack_ptr].acks_seen < REM_MACH_NUM);
   }
 }
 
@@ -1147,14 +1188,14 @@ static inline void check_when_polling_for_accs(context_t* ctx,
                                                 cp_acc_mes_t *acc_mes)
 {
   uint8_t coalesce_num = acc_mes->coalesce_num;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   if (ENABLE_ASSERTIONS) {
     //struct acc_message *p_mes = (struct acc_message *)r_mes;
     cp_acc_t *acc = &acc_mes->acc[0];
     assert(coalesce_num > 0);
     if (DEBUG_RMW) {
-      my_printf(cyan, "Worker %u sees a Propose "
+      my_printf(cyan, "Worker %u sees an Accept "
                       "from m_id %u: opcode %d at offset %d, rmw_id %lu, "
                       "log_no %u, coalesce_num %u version %u \n",
                 ctx->t_id, acc_mes->m_id,
@@ -1167,7 +1208,7 @@ static inline void check_when_polling_for_accs(context_t* ctx,
       assert(acc_mes->m_id != machine_id);
 
     }
-    if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_PROP) assert(false);
+    if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_ACC) assert(false);
   }
   if (ENABLE_STAT_COUNTING) {
     //t_stats[ctx->t_id].received_reads += coalesce_num;
@@ -1176,22 +1217,65 @@ static inline void check_when_polling_for_accs(context_t* ctx,
 }
 
 
-
-static inline void check_read_opcode_when_polling_for_reads(struct read *read, uint16_t read_i,
-                                                            uint16_t r_num, uint16_t t_id)
+static inline void check_when_polling_for_coms(context_t* ctx,
+                                               cp_com_mes_t *com_mes)
 {
+  uint8_t coalesce_num = com_mes->coalesce_num;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COM_QP_ID];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
   if (ENABLE_ASSERTIONS) {
-    //assert(MAX_PROP_COALESCE == 1); // this function won't work otherwise
-    check_state_with_allowed_flags(5, read->opcode,
-                                   OP_GET_TS, OP_ACQUIRE,
-                                   KVS_OP_GET, OP_ACQUIRE_FLIP_BIT);
-    if (read->opcode != KVS_OP_GET && read->opcode != OP_ACQUIRE &&
-        read->opcode != OP_GET_TS &&
-        read->opcode != OP_ACQUIRE_FLIP_BIT)
-      my_printf(red, "Receiving read: Opcode %u, i %u/%u \n", read->opcode, read_i, r_num);
+    cp_com_t *com = &com_mes->com[0];
+    assert(coalesce_num > 0);
+    if (DEBUG_RMW) {
+      my_printf(cyan, "Worker %u sees a Commit "
+                      "from m_id %u: opcode %d at offset %d, rmw_id %lu, "
+                      "log_no %u, coalesce_num %u version %u \n",
+                ctx->t_id, com_mes->m_id,
+                com->opcode,
+                recv_fifo->pull_ptr,
+                com->t_rmw_id,
+                com->log_no,
+                coalesce_num,
+                com->base_ts.version);
+      assert(com_mes->m_id != machine_id);
+
+    }
+    if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_COM) assert(false);
+  }
+  if (ENABLE_STAT_COUNTING) {
+    //t_stats[ctx->t_id].received_reads += coalesce_num;
+    //t_stats[ctx->t_id].received_reads_mes_num++;
   }
 }
 
+
+static inline void print_on_remote_com(cp_com_t *com,
+                                       uint16_t op_i,
+                                       uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(green, "Worker %u is handling a remote "
+                     "RMW commit on com %u, "
+                     "rmw_l_id %u, glob_ses_id %u, "
+                     "log_no %u, version %u  \n",
+              t_id, op_i, com->t_rmw_id,
+              com->t_rmw_id % GLOBAL_SESSION_NUM,
+              com->log_no, com->base_ts.version);
+}
+
+static inline void print_log_remote_com(cp_com_t *com,
+                                        cp_com_mes_t *com_mes,
+                                        mica_op_t *kv_ptr,
+                                        uint16_t t_id)
+{
+  if (PRINT_LOGS) {
+    uint8_t acc_m_id = com_mes->m_id;
+    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Com: m_id:%u, rmw_id %lu, glob_sess id: %u, "
+                                 "version %u, m_id: %u \n",
+            kv_ptr->key.bkt, com->log_no, 0, acc_m_id, com->t_rmw_id,
+            (uint32_t) (com->t_rmw_id % GLOBAL_SESSION_NUM), com->base_ts.version, com->base_ts.m_id);
+  }
+}
 
 
 

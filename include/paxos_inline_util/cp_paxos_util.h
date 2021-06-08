@@ -1374,7 +1374,7 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
   // If it updates it will zero the back-off counter
   if (!attempt_to_grab_kv_ptr_after_waiting(p_ops, kv_ptr, loc_entry,
                                             sess_i, t_id)) {
-    if (ENABLE_ASSERTIONS) assert(p_ops->sess_info[sess_i].stalled);
+    if (ENABLE_ASSERTIONS) assert(p_ops->stalled);
     loc_entry->back_off_cntr++;
     if (loc_entry->back_off_cntr == RMW_BACK_OFF_TIMEOUT) {
        //   my_printf(yellow, "Wrkr %u  sess %u waiting for an rmw on key %u on log %u, back_of cntr %u waiting on rmw_id %u state %u \n",

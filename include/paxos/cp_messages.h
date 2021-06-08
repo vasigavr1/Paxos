@@ -64,9 +64,22 @@
 
 #define MAX_ACC_WRS (MESSAGES_IN_BCAST_BATCH)
 #define MAX_RECV_ACC_WRS ((ACC_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
-
 #define MAX_INCOMING_ACC (MAX_RECV_ACC_WRS * ACC_COALESCE)
 #define ACC_REP_FIFO_SIZE (MAX_INCOMING_ACC)
+#define MAX_INCOMING_COM (MAX_RECV_COM_WRS * COM_COALESCE)
+
+// COMMITS
+#define MAX_COM_WRS (MESSAGES_IN_BCAST_BATCH)
+#define MAX_RECV_COM_WRS ((COM_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
+#define COM_MES_HEADER (12) // local id + m_id + com_num + opcode
+#define COM_HEADER (27 + 1)
+#define COM_SIZE (COM_HEADER + RMW_VALUE_SIZE)
+#define COM_MES_SIZE (COM_MES_HEADER + (COM_SIZE * COM_COALESCE))
+#define COM_RECV_SIZE (GRH_SIZE + COM_MES_SIZE)
+
+// COMMIT_NO_VAL
+#define COMMIT_NO_VAL_SIZE (22 + 2)
+#define COM_NO_VAL_MES_SIZE (COM_MES_HEADER + (COMMIT_NO_VAL_SIZE * COM_COALESCE))
 
 
 
@@ -82,16 +95,7 @@
 
 
 
-// COMMITS
-#define COMMIT_HEADER (27 + 1)
-#define COMMIT_SIZE (COMMIT_HEADER + RMW_VALUE_SIZE)
-#define COM_COALESCE (EFFECTIVE_MAX_W_SIZE / COMMIT_SIZE)
-#define COM_MES_SIZE (W_MES_HEADER + (COMMIT_SIZE * COM_COALESCE))
 
-// COMMIT_NO_VAL
-#define COMMIT_NO_VAL_SIZE (22 + 2)
-#define COM_NO_VAL_COALESCE (EFFECTIVE_MAX_W_SIZE / COMMIT_NO_VAL_SIZE)
-#define COM_NO_VAL_MES_SIZE (W_MES_HEADER + (COMMIT_NO_VAL_SIZE * COM_NO_VAL_COALESCE))
 
 // COMBINED FROM Writes, Releases, Accepts, Commits
 #define MAX_WRITE_COALESCE MAX_OF_4(W_COALESCE, COM_COALESCE, ACC_COALESCE, COM_NO_VAL_COALESCE)
@@ -132,82 +136,7 @@
 #define MAX_RECV_ACK_WRS (REM_MACH_NUM * W_CREDITS)
 #define MAX_ACK_WRS (MACHINE_NUM)
 
-
-
-typedef struct write {
-  uint32_t version;
-  uint8_t m_id;
-  uint8_t opcode;
-  uint8_t val_len;
-  uint8_t unused;
-  mica_key_t key;
-  uint8_t value[VALUE_SIZE];
-} __attribute__((__packed__)) write_t;
-
-
-typedef struct accept {
-  struct network_ts_tuple ts;
-  uint8_t opcode;
-  uint8_t val_len;
-  uint8_t unused;
-  mica_key_t key;
-  uint64_t t_rmw_id ; // the upper bits are overloaded to indicate that the accept is trying to flip a bit
-  uint64_t l_id;
-  uint32_t log_no;
-  ts_tuple_t base_ts;
-  //uint8_t unused_[3];
-  uint8_t value[RMW_VALUE_SIZE];
-} __attribute__((__packed__)) cp_acc_t;
-
-typedef struct cp_acc_mes {
-  uint64_t l_id;
-  uint8_t coalesce_num;
-  uint8_t m_id;
-  cp_acc_t acc[ACC_COALESCE];
-
-}__attribute__((__packed__)) cp_acc_mes_t;
-
-typedef struct cp_acc_message_ud_req {
-  uint8_t grh[GRH_SIZE];
-  cp_acc_mes_t acc_mes;
-} cp_acc_mes_ud_t;
-
-
-
-struct commit_no_val {
-  uint32_t log_no;
-  uint8_t unused;
-  uint8_t opcode;
-  uint8_t unused_[2];
-  mica_key_t key;
-
-  uint64_t t_rmw_id; //rmw lid to be committed
-}__attribute__((__packed__));
-
-struct commit {
-  struct network_ts_tuple base_ts;
-  uint8_t opcode;
-  uint8_t val_len;
-  uint8_t unused;
-  mica_key_t key;
-
-  uint64_t t_rmw_id; //rmw lid to be committed
-  uint32_t log_no;
-
-  uint8_t value[VALUE_SIZE];
-} __attribute__((__packed__));
-
-//
-struct read {
-  struct network_ts_tuple ts;
-  uint8_t opcode;
-  uint8_t unused[2];
-  mica_key_t key;
-
-  uint32_t log_no;
-} __attribute__((__packed__));
-
-// PROPOSES
+/// PROPOSES
 typedef struct propose {
   struct network_ts_tuple ts;
   uint8_t opcode;
@@ -249,7 +178,7 @@ typedef struct rmw_rep_message {
   uint8_t m_id;
   uint8_t opcode;
   uint64_t l_id ;
-  cp_rmw_rep_t rmw_rep[MAX_COALESCE];
+  cp_rmw_rep_t rmw_rep[MAX_PROP_ACC_COALESCE];
 }__attribute__((__packed__)) cp_rmw_rep_mes_t;
 
 typedef struct cp_rmw_rep_message_ud_req {
@@ -257,7 +186,87 @@ typedef struct cp_rmw_rep_message_ud_req {
   cp_rmw_rep_mes_t rep_mes;
 } cp_rmw_rep_mes_ud_t;
 
+/// Accepts
+typedef struct accept {
+  struct network_ts_tuple ts;
+  uint8_t opcode;
+  uint8_t val_len;
+  uint8_t unused;
+  mica_key_t key;
+  uint64_t t_rmw_id ; // the upper bits are overloaded to indicate that the accept is trying to flip a bit
+  uint64_t l_id;
+  uint32_t log_no;
+  ts_tuple_t base_ts;
+  //uint8_t unused_[3];
+  uint8_t value[RMW_VALUE_SIZE];
+} __attribute__((__packed__)) cp_acc_t;
 
+typedef struct cp_acc_mes {
+  uint64_t l_id;
+  uint8_t coalesce_num;
+  uint8_t m_id;
+  cp_acc_t acc[ACC_COALESCE];
+
+}__attribute__((__packed__)) cp_acc_mes_t;
+
+typedef struct cp_acc_message_ud_req {
+  uint8_t grh[GRH_SIZE];
+  cp_acc_mes_t acc_mes;
+} cp_acc_mes_ud_t;
+
+/// Commits
+struct commit_no_val {
+  uint32_t log_no;
+  uint8_t unused;
+  uint8_t opcode;
+  uint8_t unused_[2];
+  mica_key_t key;
+  uint64_t t_rmw_id; //rmw lid to be committed
+}__attribute__((__packed__));
+
+typedef struct commit {
+  struct network_ts_tuple base_ts;
+  uint8_t opcode;
+  uint8_t val_len;
+  uint8_t unused;
+  mica_key_t key;
+  uint64_t t_rmw_id; //rmw lid to be committed
+  uint32_t log_no;
+  uint8_t value[VALUE_SIZE];
+} __attribute__((__packed__)) cp_com_t;
+
+
+typedef struct cp_com_mes {
+  uint64_t l_id;
+  uint8_t m_id;
+  uint8_t coalesce_num;
+  uint8_t opcode;
+  uint8_t unused;
+  cp_com_t com[COM_COALESCE];
+}__attribute__((__packed__)) cp_com_mes_t;
+
+typedef struct cp_com_message_ud_req {
+  uint8_t grh[GRH_SIZE];
+  cp_com_mes_t com_mes;
+} cp_com_mes_ud_t;
+
+
+
+
+
+
+
+
+
+typedef struct write {
+  uint32_t version;
+  uint8_t m_id;
+  uint8_t opcode;
+  uint8_t val_len;
+  uint8_t unused;
+  mica_key_t key;
+  uint8_t value[VALUE_SIZE];
+} __attribute__((__packed__)) write_t;
 
 typedef struct w_message {
   uint64_t l_id;
