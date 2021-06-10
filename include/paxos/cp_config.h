@@ -27,10 +27,6 @@ void cp_stats(stats_ctx_t *ctx);
 #define COM_COALESCE 10
 #define COM_CREDITS 5
 
-
-#define W_CREDITS 8
-#define MAX_READ_SIZE 730 //300 in terms of bytes for Reads/Acquires/RMW-Acquires/Proposes
-#define MAX_WRITE_SIZE 800 // only writes 400 -- only rmws 1200 in terms of bytes for Writes/Releases/Accepts/Commits
 #define MEASURE_SLOW_PATH 0
 #define MAX_OP_BATCH SESSIONS_PER_THREAD
 
@@ -40,11 +36,8 @@ void cp_stats(stats_ctx_t *ctx);
 
 #define ENABLE_COMMITS_WITH_NO_VAL 1
 #define ENABLE_CAS_CANCELLING 1
-#define ENABLE_ALL_ABOARD 1
-#define EMULATE_ABD 0
-#define TURN_OFF_KITE_ 1
-#define TURN_OFF_KITE (EMULATE_ABD ? 1 : TURN_OFF_KITE_)
-#define ACCEPT_IS_RELEASE 0
+#define ENABLE_ALL_ABOARD 0
+
 
 // TIMEOUTS
 #define WRITE_FIFO_TIMEOUT M_1

@@ -178,7 +178,7 @@ static inline void cp_insert_rmw_rep_helper(context_t *ctx,
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *send_fifo = qp_meta->send_fifo;
   cp_ptrs_to_ops_t *ptrs_to_ops = cp_ctx->ptrs_to_ops;
-  bool is_accept = qp_id == ACC_QP_ID;
+  bool is_accept = qp_id == ACC_REP_QP_ID;
   void *op = ptrs_to_ops->ptr_to_ops[op_i];
   void *mes = ptrs_to_ops->ptr_to_mes[op_i];
 
@@ -193,8 +193,11 @@ static inline void cp_insert_rmw_rep_helper(context_t *ctx,
   if (slot_meta->coalesce_num == 1) {
     rep_mes->l_id = get_rmw_mes_l_id(mes, is_accept);
     slot_meta->rm_id = get_rmw_mes_m_id(mes, is_accept);
-    rep_mes->opcode = PROP_REPLY; //TODO remove the opcode field
+    rep_mes->opcode = is_accept? ACCEPT_REPLY :PROP_REPLY; //TODO remove the opcode field
+    rep_mes->m_id = ctx->m_id;
   }
+
+  rep_mes->coalesce_num = slot_meta->coalesce_num;
 }
 
 
@@ -202,14 +205,14 @@ static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
                                              void *source, uint32_t op_i)
 {
   cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) prop_rep_ptr,
-                           (mica_op_t *) source, op_i, PROP_QP_ID);
+                           (mica_op_t *) source, op_i, PROP_REP_QP_ID);
 }
 
 static inline void cp_insert_acc_rep_helper(context_t *ctx, void* acc_rep_ptr,
                                              void *source, uint32_t op_i)
 {
   cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) acc_rep_ptr,
-                           (mica_op_t *) source, op_i, ACC_QP_ID);
+                           (mica_op_t *) source, op_i, ACC_REP_QP_ID);
 }
 
 
@@ -253,11 +256,13 @@ static inline void fill_com_rob_entry(cp_ctx_t *cp_ctx,
 static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
                                       void *source, uint32_t source_flag)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COM_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   cp_com_t *com = (cp_com_t *) com_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
+
+  printf("Inserting commit \n");
 
   fill_commit_message_from_l_entry(com, loc_entry, source_flag, ctx->t_id);
 
@@ -287,10 +292,11 @@ static inline void cp_apply_acks(context_t *ctx,
 
   for (uint32_t ack_i = 0; ack_i < ack_num; ack_i++) {
     cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_slot(cp_ctx->com_rob, ack_ptr);
+    printf("ack_ptr %u \n", ack_ptr);
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
-      act_on_quorum_of_commit_acks(cp_ctx, &cp_ctx->prop_info[com_rob->sess_id], ack_ptr, ctx->t_id);
+      act_on_quorum_of_commit_acks(cp_ctx, &cp_ctx->prop_info->entry[com_rob->sess_id], ack_ptr, ctx->t_id);
       com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);

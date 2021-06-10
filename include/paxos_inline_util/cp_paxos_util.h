@@ -113,97 +113,7 @@ static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
   else return RMW_ACK;
 }
 
-static inline void create_prop_rep(cp_prop_t *prop,
-                                   cp_prop_mes_T *prop_mes,
-                                   cp_rmw_rep_t *prop_rep,
-                                   mica_op_t *kv_ptr,
-                                   uint16_t t_id)
-{
-  uint64_t number_of_reqs = 0;
-  uint64_t rmw_l_id = prop->t_rmw_id;
-  uint64_t l_id = prop->l_id;
-  //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = prop->log_no;
-  uint8_t prop_m_id = prop_mes->m_id;
 
-  prop_rep->l_id = prop->l_id;
-  lock_seqlock(&kv_ptr->seqlock);
-  {
-    if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
-      if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
-        prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
-                                                            prop_rep, prop->log_no, true);
-        // if the propose is going to be acked record its information in the kv_ptr
-        if (prop_rep->opcode == RMW_ACK) {
-          if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
-          activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
-                           prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                           ENABLE_ASSERTIONS ? "received propose" : NULL);
-        }
-        if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
-          prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
-        }
-        if (ENABLE_ASSERTIONS) {
-          assert(kv_ptr->prop_ts.version >= prop->ts.version);
-          check_keys_with_one_trace_op(&prop->key, kv_ptr);
-        }
-      }
-    }
-    if (ENABLE_DEBUG_RMW_KV_PTR) {
-      // kv_ptr->dbg->prop_acc_num++;
-      // number_of_reqs = kv_ptr->dbg->prop_acc_num;
-    }
-    check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
-  }
-  unlock_seqlock(&kv_ptr->seqlock);
-  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
-                        prop->ts, kv_ptr, number_of_reqs, false, t_id));
-
-
-}
-
-
-static inline void create_acc_rep(cp_acc_t *acc,
-                                  cp_acc_mes_t *acc_mes,
-                                  cp_rmw_rep_t *acc_rep,
-                                  mica_op_t *kv_ptr,
-                                  uint16_t t_id)
-{
-  uint64_t rmw_l_id = acc->t_rmw_id;
-  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = acc->log_no;
-  uint8_t acc_m_id = acc_mes->m_id;
-  acc_rep->l_id = acc->l_id;
-
-
-  lock_seqlock(&kv_ptr->seqlock);
-  if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
-    if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
-      acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
-      if (acc_rep->opcode == RMW_ACK) {
-        activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
-                         acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                         ENABLE_ASSERTIONS ? "received accept" : NULL);
-        memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
-        kv_ptr->base_acc_ts = acc->base_ts;
-      }
-    }
-  }
-  uint64_t number_of_reqs = 0;
-
-  if (ENABLE_DEBUG_RMW_KV_PTR) {
-    // kv_ptr->dbg->prop_acc_num++;
-    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
-  }
-  check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
-  unlock_seqlock(&kv_ptr->seqlock);
-  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
-                        prop->ts, kv_ptr, number_of_reqs, false, t_id));
-}
-
-/*--------------------------------------------------------------------------
- * --------------------RECEIVING REPLY-UTILITY-------------------------------------
- * --------------------------------------------------------------------------*/
 
 // Search in the prepare entries for an lid (used when receiving a prep reply)
 static inline int search_prop_entries_with_l_id(struct prop_info *prop_info,uint8_t state, uint64_t l_id)
@@ -269,7 +179,7 @@ static inline void init_loc_entry(cp_ctx_t* cp_ctx,
   else if (op->opcode == FETCH_AND_ADD) {
     loc_entry->compare_val = op->value_to_write; // value to be added
   }
-  loc_entry->must_release = ACCEPT_IS_RELEASE != 0;
+  //loc_entry->must_release = ACCEPT_IS_RELEASE != 0;
   loc_entry->fp_detected = false;
   loc_entry->rmw_val_len = op->real_val_len;
   loc_entry->rmw_is_successful = false;
@@ -467,6 +377,98 @@ static inline uint8_t handle_remote_prop_or_acc_in_kvs(mica_op_t *kv_ptr, void *
 
 /*--------------------------------------------------------------------------
  * --------------------ACCEPTING-------------------------------------
+ * --------------------------------------------------------------------------*/
+
+static inline void create_prop_rep(cp_prop_t *prop,
+                                   cp_prop_mes_t *prop_mes,
+                                   cp_rmw_rep_t *prop_rep,
+                                   mica_op_t *kv_ptr,
+                                   uint16_t t_id)
+{
+  uint64_t number_of_reqs = 0;
+  uint64_t rmw_l_id = prop->t_rmw_id;
+  uint64_t l_id = prop->l_id;
+  //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
+  uint32_t log_no = prop->log_no;
+  uint8_t prop_m_id = prop_mes->m_id;
+
+  prop_rep->l_id = prop->l_id;
+  lock_seqlock(&kv_ptr->seqlock);
+  {
+    if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
+      if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
+        prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
+                                                            prop_rep, prop->log_no, true);
+        // if the propose is going to be acked record its information in the kv_ptr
+        if (prop_rep->opcode == RMW_ACK) {
+          if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
+          activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
+                           prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                           ENABLE_ASSERTIONS ? "received propose" : NULL);
+        }
+        if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
+          prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
+        }
+        if (ENABLE_ASSERTIONS) {
+          assert(kv_ptr->prop_ts.version >= prop->ts.version);
+          check_keys_with_one_trace_op(&prop->key, kv_ptr);
+        }
+      }
+    }
+    if (ENABLE_DEBUG_RMW_KV_PTR) {
+      // kv_ptr->dbg->prop_acc_num++;
+      // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+    }
+    check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
+  }
+  unlock_seqlock(&kv_ptr->seqlock);
+  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
+                        prop->ts, kv_ptr, number_of_reqs, false, t_id);
+
+
+}
+
+
+static inline void create_acc_rep(cp_acc_t *acc,
+                                  cp_acc_mes_t *acc_mes,
+                                  cp_rmw_rep_t *acc_rep,
+                                  mica_op_t *kv_ptr,
+                                  uint16_t t_id)
+{
+  uint64_t rmw_l_id = acc->t_rmw_id;
+  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
+  uint32_t log_no = acc->log_no;
+  uint8_t acc_m_id = acc_mes->m_id;
+  acc_rep->l_id = acc->l_id;
+
+
+  lock_seqlock(&kv_ptr->seqlock);
+  if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
+    if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
+      acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
+      if (acc_rep->opcode == RMW_ACK) {
+        activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
+                         acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                         ENABLE_ASSERTIONS ? "received accept" : NULL);
+        memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
+        kv_ptr->base_acc_ts = acc->base_ts;
+      }
+    }
+  }
+  uint64_t number_of_reqs = 0;
+
+  if (ENABLE_DEBUG_RMW_KV_PTR) {
+    // kv_ptr->dbg->prop_acc_num++;
+    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+  }
+  check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
+  unlock_seqlock(&kv_ptr->seqlock);
+  print_log_on_rmw_recv(rmw_l_id, acc_m_id, log_no, acc_rep,
+                        acc->ts, kv_ptr, number_of_reqs, false, t_id);
+}
+
+/*--------------------------------------------------------------------------
+ * --------------------RECEIVING REPLY-UTILITY-------------------------------------
  * --------------------------------------------------------------------------*/
 
 

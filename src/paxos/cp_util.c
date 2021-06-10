@@ -101,9 +101,8 @@ void dump_stats_2_file(struct stats* st){
     double total_MIOPS;
     char* path = "../../results/scattered-results";
 
-    sprintf(filename, "%s/%s-%s_s_%d_v_%d_m_%d_w_%d_r_%d-%d.csv", path,
-            EMULATE_ABD == 1 ? "DRF-" : "REAL-",
-            "ABD",
+    sprintf(filename, "%s/%s_s_%d_v_%d_m_%d_w_%d_r_%d-%d.csv", path,
+            "CP",
             SESSIONS_PER_THREAD,
             USE_BIG_OBJECTS == 1 ? ((EXTRA_CACHE_LINES * 64) + BASE_VALUE_SIZE): BASE_VALUE_SIZE,
             MACHINE_NUM, WORKERS_PER_MACHINE,
@@ -162,6 +161,14 @@ void cp_init_send_fifos(context_t *ctx)
     accs[i].m_id = ctx->m_id;
   }
 
+  send_fifo = ctx->qp_meta[COM_QP_ID].send_fifo;
+  cp_com_mes_t *coms = (cp_com_mes_t *) send_fifo->fifo;
+
+  for (uint32_t i = 0; i < COM_FIFO_SIZE; i++) {
+    coms[i].m_id = ctx->m_id;
+    coms[i].opcode = COMMIT_OP;
+  }
+
   ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo;
   assert(ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size == CTX_ACK_SIZE * MACHINE_NUM);
   memset(ack_send_buf, 0, ctx->qp_meta[ACK_QP_ID].send_fifo->max_byte_size);
@@ -200,8 +207,8 @@ void cp_qp_meta_mfs(context_t *ctx)
   mfs[COM_QP_ID].recv_handler = cp_com_recv_handler;
   mfs[COM_QP_ID].recv_kvs = cp_KVS_batch_op_coms;
 
-  mfs[COM_QP_ID].send_helper = cp_send_ack_helper;
-  mfs[COM_QP_ID].recv_handler = cp_ack_recv_handler;
+  mfs[ACK_QP_ID].send_helper = cp_send_ack_helper;
+  mfs[ACK_QP_ID].recv_handler = cp_ack_recv_handler;
 
   ctx_set_qp_meta_mfs(ctx, mfs);
   free(mfs);
@@ -260,7 +267,7 @@ void cp_init_qp_meta(context_t *ctx)
   ///
   create_ack_qp_meta(&qp_meta[ACK_QP_ID],
                      COM_QP_ID, REM_MACH_NUM,
-                     REM_MACH_NUM, W_CREDITS);
+                     REM_MACH_NUM, COM_CREDITS);
 
   cp_qp_meta_mfs(ctx);
   cp_init_send_fifos(ctx);

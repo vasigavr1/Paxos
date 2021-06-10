@@ -170,7 +170,7 @@ static inline void send_acc_checks(context_t *ctx)
 static inline void send_com_checks(context_t *ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COM_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
   // Create the broadcast messages
@@ -185,6 +185,17 @@ static inline void send_com_checks(context_t *ctx)
     assert(com_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
     assert(com_mes->coalesce_num > 0);
     assert(com_mes->m_id == (uint8_t) ctx->m_id);
+
+    for (uint8_t i = 0; i < coalesce_num; i++)
+    {
+      uint16_t backward_ptr = (slot_meta->backward_ptr + i) % COM_FIFO_SIZE;
+      cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_slot(cp_ctx->com_rob, backward_ptr);
+      assert(com_rob->state == VALID);
+      assert(com_rob->acks_seen == 0);
+      assert(com_rob->l_id == com_mes->l_id + i);
+      com_rob->state = SENT_COMMIT;
+
+    }
 
     if (DEBUG_RMW) {
       cp_com_t *com = &com_mes->com[0];
@@ -207,7 +218,7 @@ static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
 {
   if (!ENABLE_ASSERTIONS) return;
 
-  bool is_accept = qp_id == ACC_QP_ID;
+  bool is_accept = qp_id == ACC_REP_QP_ID;
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *send_fifo = qp_meta->send_fifo;
@@ -329,7 +340,7 @@ static inline void print_log_on_rmw_recv(uint64_t rmw_l_id,
                                          uint8_t acc_m_id,
                                          uint32_t log_no,
                                          cp_rmw_rep_t *acc_rep,
-                                         ts_tuple_t ts,
+                                         netw_ts_tuple_t ts,
                                          mica_op_t *kv_ptr,
                                          uint64_t number_of_reqs,
                                          bool is_accept,
@@ -761,9 +772,10 @@ static inline void print_log_remote_com(cp_com_t *com,
 {
   if (PRINT_LOGS) {
     uint8_t acc_m_id = com_mes->m_id;
+    uint64_t number_of_rquests = 0;
     fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Com: m_id:%u, rmw_id %lu, glob_sess id: %u, "
                                  "version %u, m_id: %u \n",
-            kv_ptr->key.bkt, com->log_no, 0, acc_m_id, com->t_rmw_id,
+            kv_ptr->key.bkt, com->log_no, number_of_rquests, acc_m_id, com->t_rmw_id,
             (uint32_t) (com->t_rmw_id % GLOBAL_SESSION_NUM), com->base_ts.version, com->base_ts.m_id);
   }
 }
@@ -1253,7 +1265,7 @@ static inline void checks_stats_prints_when_sending_acks(ctx_ack_mes_t *acks,
   if (ENABLE_ASSERTIONS) {
     assert(acks[m_i].credits <= acks[m_i].ack_num);
     if (acks[m_i].ack_num > COM_COALESCE) assert(acks[m_i].credits > 1);
-    if (!ENABLE_MULTICAST) assert(acks[m_i].credits <= W_CREDITS);
+    if (!ENABLE_MULTICAST) assert(acks[m_i].credits <= COM_CREDITS);
     assert(acks[m_i].ack_num > 0);
   }
 }

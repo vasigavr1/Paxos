@@ -183,11 +183,6 @@ enum {
 #define LOG_WS 1
 
 
-// VIRTUAL CHANNELS
-#define VC_NUM 2
-#define R_VC 0
-#define W_VC 1
-
 
 // QUEUE PAIRS
 #define QP_NUM 6
@@ -198,10 +193,6 @@ enum {
 #define COM_QP_ID 4
 #define ACK_QP_ID 5
 
-#define POLL_CQ_R 0
-#define POLL_CQ_W 1
-#define POLL_CQ_R_REP 2
-#define POLL_CQ_ACK 3
 
 
 

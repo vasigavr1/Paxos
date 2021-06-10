@@ -187,6 +187,7 @@ static inline void send_accs_helper(context_t *ctx)
 
 static inline void cp_send_coms_helper(context_t *ctx)
 {
+  printf("sending commit \n");
   send_com_checks(ctx);
 }
 
@@ -278,7 +279,7 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
       (cp_rmw_rep_mes_t *) &incoming_reps[recv_fifo->pull_ptr].rep_mes;
 
 
-  bool is_accept = qp_id == ACC_QP_ID;
+  bool is_accept = qp_id == ACC_REP_QP_ID;
   handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
 
   //if (ENABLE_STAT_COUNTING) {
@@ -291,25 +292,28 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 
 static inline bool cp_prop_rep_recv_handler(context_t* ctx)
 {
-  cp_rmw_rep_recv_handler(ctx, PROP_QP_ID);
+  printf("Sending propose rep \n");
+  cp_rmw_rep_recv_handler(ctx, PROP_REP_QP_ID);
   return true;
 }
 
 static inline bool cp_acc_rep_recv_handler(context_t* ctx)
 {
-  cp_rmw_rep_recv_handler(ctx, ACC_QP_ID);
+  printf("Sending accept rep \n");
+  cp_rmw_rep_recv_handler(ctx, ACC_REP_QP_ID);
   return true;
 }
 
 static inline bool cp_com_recv_handler(context_t* ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[COM_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_com_mes_ud_t *incoming_coms = (volatile cp_com_mes_ud_t *) recv_fifo->fifo;
   cp_com_mes_t *com_mes = (cp_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com_mes;
 
   check_when_polling_for_coms(ctx, com_mes);
+  printf("received commit \n");
 
   uint8_t coalesce_num = com_mes->coalesce_num;
   bool can_send_acks = ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  com_mes->l_id, com_mes->m_id);
@@ -320,7 +324,7 @@ static inline bool cp_com_recv_handler(context_t* ctx)
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
     cp_com_t *com = &com_mes->com[i];
-    check_state_with_allowed_flags(2, com->opcode, COMMIT_OP);
+    check_state_with_allowed_flags(3, com->opcode, COMMIT_OP, COMMIT_OP_NO_VAL);
     ptrs_to_com->ptr_to_ops[ptrs_to_com->polled_ops] = (void *) com;
     ptrs_to_com->ptr_to_mes[ptrs_to_com->polled_ops] = (void *) com_mes;
     ptrs_to_com->polled_ops++;
@@ -328,7 +332,7 @@ static inline bool cp_com_recv_handler(context_t* ctx)
   return true;
 }
 
-inline bool cp_ack_recv_handler(context_t *ctx)
+static inline bool cp_ack_recv_handler(context_t *ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];

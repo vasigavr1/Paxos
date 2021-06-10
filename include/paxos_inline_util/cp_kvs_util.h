@@ -202,7 +202,7 @@ static inline void cp_KVS_batch_op_coms(context_t *ctx)
   for(op_i = 0; op_i < op_num; op_i++) {
     od_KVS_check_key(kv_ptr[op_i], coms[op_i]->key, op_i);
     cp_com_t *com = coms[op_i];
-    if (ENABLE_ASSERTIONS) assert(com->opcode == COMMIT_OP);
+    if (ENABLE_ASSERTIONS) assert(com->opcode == COMMIT_OP || com->opcode == COMMIT_OP_NO_VAL);
     print_on_remote_com(com, op_i, ctx->t_id);
     commit_rmw(kv_ptr[op_i], (void*) com, NULL, FROM_REMOTE_COMMIT, ctx->t_id);
     print_log_remote_com(com, ptrs_to_com->ptr_to_mes[op_i], kv_ptr[op_i], ctx->t_id);
