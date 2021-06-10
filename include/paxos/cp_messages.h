@@ -66,7 +66,7 @@
 #define MAX_RECV_ACC_WRS ((ACC_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
 #define MAX_INCOMING_ACC (MAX_RECV_ACC_WRS * ACC_COALESCE)
 #define ACC_REP_FIFO_SIZE (MAX_INCOMING_ACC)
-#define MAX_INCOMING_COM (MAX_RECV_COM_WRS * COM_COALESCE)
+
 
 // COMMITS
 #define MAX_COM_WRS (MESSAGES_IN_BCAST_BATCH)
@@ -76,65 +76,11 @@
 #define COM_SIZE (COM_HEADER + RMW_VALUE_SIZE)
 #define COM_MES_SIZE (COM_MES_HEADER + (COM_SIZE * COM_COALESCE))
 #define COM_RECV_SIZE (GRH_SIZE + COM_MES_SIZE)
+#define MAX_INCOMING_COM (MAX_RECV_COM_WRS * COM_COALESCE)
 
 // COMMIT_NO_VAL
 #define COMMIT_NO_VAL_SIZE (22 + 2)
 #define COM_NO_VAL_MES_SIZE (COM_MES_HEADER + (COMMIT_NO_VAL_SIZE * COM_COALESCE))
-
-
-
-// WRITES: Releases, writes, accepts and commits -- all sizes in BYTES
-#define W_MES_HEADER (12) // local id + m_id+ w_num + opcode
-#define EFFECTIVE_MAX_W_SIZE (MAX_WRITE_SIZE - W_MES_HEADER) // all messages have the same header
-
-// Writes-Releases
-#define WRITE_HEADER (KEY_SIZE + TS_TUPLE_SIZE + 3) // opcode + val_len
-#define W_SIZE (VALUE_SIZE + WRITE_HEADER)
-#define W_COALESCE (EFFECTIVE_MAX_W_SIZE / W_SIZE)
-#define W_MES_SIZE (W_MES_HEADER + (W_SIZE * W_COALESCE))
-
-
-
-
-
-// COMBINED FROM Writes, Releases, Accepts, Commits
-#define MAX_WRITE_COALESCE MAX_OF_4(W_COALESCE, COM_COALESCE, ACC_COALESCE, COM_NO_VAL_COALESCE)
-#define MAX_W_MES_SIZE MAX_OF_4(W_MES_SIZE, COM_MES_SIZE, ACC_MES_SIZE, COM_NO_VAL_MES_SIZE)
-#define MAX_MES_IN_WRITE (MAX_WRITE_COALESCE)
-
-#define W_SEND_SIZE MAX_W_MES_SIZE
-#define W_SEND_SIDE_PADDING 0 //FIND_PADDING(W_SEND_SIZE)
-#define ALIGNED_W_SEND_SIDE (W_SEND_SIZE + W_SEND_SIDE_PADDING)
-
-#define W_RECV_SIZE (GRH_SIZE + ALIGNED_W_SEND_SIDE)
-#define W_ENABLE_INLINING ((MAX_W_MES_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
-#define MAX_RECV_W_WRS ((W_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
-
-#define MAX_INCOMING_W (MAX_RECV_W_WRS * MAX_WRITE_COALESCE)
-
-
-// COMBINE Reads, Acquires, RMW-acquires, Accepts , Propose
-#define MAX_R_REP_MES_SIZE MAX_OF_4(READ_TS_REP_MES_SIZE, ACQ_REP_MES_SIZE, PROP_REP_MES_SIZE, ACC_REP_MES_SIZE)
-#define R_REP_SEND_SIZE MIN(MAX_R_REP_MES_SIZE, MTU)
-
-#define MAX_R_REP_COALESCE MAX_OF_3(R_COALESCE, PROP_COALESCE, ACC_COALESCE)
-#define MAX_REPS_IN_REP MAX_R_REP_COALESCE
-
-#define R_REP_SEND_SIDE_PADDING 0 //FIND_PADDING(R_REP_SEND_SIZE)
-#define ALIGNED_R_REP_SEND_SIDE (R_REP_SEND_SIZE + R_REP_SEND_SIDE_PADDING)
-#define R_REP_RECV_SIZE (GRH_SIZE + ALIGNED_R_REP_SEND_SIDE)
-
-#define R_REP_SLOTS_FOR_ACCEPTS (W_CREDITS * REM_MACH_NUM * SESSIONS_PER_THREAD) // the maximum number of accept-related read replies
-#define MAX_RECV_R_REP_WRS ((REM_MACH_NUM * PROP_CREDITS) + R_REP_SLOTS_FOR_ACCEPTS)
-#define R_REP_WRS_WITHOUT_ACCEPTS (PROP_CREDITS * REM_MACH_NUM)
-
-
-#define R_REP_ENABLE_INLINING ((R_REP_SEND_SIZE > MAXIMUM_INLINE_SIZE) ?  0 : 1)
-
-
-// Acks
-#define MAX_RECV_ACK_WRS (REM_MACH_NUM * W_CREDITS)
-#define MAX_ACK_WRS (MACHINE_NUM)
 
 /// PROPOSES
 typedef struct propose {
@@ -249,106 +195,5 @@ typedef struct cp_com_message_ud_req {
   uint8_t grh[GRH_SIZE];
   cp_com_mes_t com_mes;
 } cp_com_mes_ud_t;
-
-
-
-
-
-
-
-
-
-typedef struct write {
-  uint32_t version;
-  uint8_t m_id;
-  uint8_t opcode;
-  uint8_t val_len;
-  uint8_t unused;
-  mica_key_t key;
-  uint8_t value[VALUE_SIZE];
-} __attribute__((__packed__)) write_t;
-
-typedef struct w_message {
-  uint64_t l_id;
-  uint8_t m_id;
-  uint8_t coalesce_num;
-  uint8_t opcode;
-  uint8_t unused;
-
-  write_t write[W_COALESCE];
-} __attribute__((__packed__)) w_mes_t;
-
-//
-typedef struct r_message {
-  uint64_t l_id;
-  uint8_t coalesce_num;
-  uint8_t m_id;
-
-  struct read read[R_COALESCE];
-} __attribute__((__packed__)) r_mes_t;
-
-typedef struct w_message_ud_req {
-  uint8_t unused[GRH_SIZE];
-  uint8_t w_mes[ALIGNED_W_SEND_SIDE];
-} w_mes_ud_t;
-
-//
-typedef struct r_message_ud_req {
-  uint8_t unused[GRH_SIZE];
-  uint8_t r_mes[ALIGNED_R_SEND_SIDE];
-} r_mes_ud_t;
-
-
-// Sent when the timestamps are equal or smaller
-struct r_rep_small {
-  uint8_t opcode;
-};
-
-// Sent when you have a bigger carstamp
-struct r_rep_big {
-  uint8_t opcode;
-  struct network_ts_tuple base_ts;
-  uint8_t value[VALUE_SIZE];
-  uint32_t log_no; // last committed only
-  uint64_t rmw_id; // last committed
-}__attribute__((__packed__));
-
-
-
-//
-//typedef struct r_rep_message {
-//  uint8_t coalesce_num;
-//  uint8_t m_id;
-//  uint8_t opcode;
-//  uint64_t l_id;
-//  struct r_rep_big r_rep[MAX_R_REP_COALESCE];
-//} __attribute__((__packed__)) r_rep_mes_t;
-
-
-//typedef struct r_rep_message_ud_req {
-//  uint8_t unused[GRH_SIZE];
-//  uint8_t r_rep_mes[ALIGNED_R_REP_SEND_SIDE];
-//} r_rep_mes_ud_t;
-
-// Reply for both accepts and proposes
-// Reply with the last committed RMW if the
-// proposal/accept had a low log number or has already been committed
-
-
-
-
-
-/*------------TEMPLATES----------*/
-//struct r_rep_message_template {
-//  uint8_t unused[ALIGNED_R_REP_SEND_SIDE];
-//};
-//
-//struct w_message_template {
-//  uint8_t unused[ALIGNED_W_SEND_SIDE];
-//};
-//
-//struct r_message_template {
-//  uint8_t unused[ALIGNED_R_SEND_SIDE];
-//};
 
 #endif //CP_MESSAGES_H

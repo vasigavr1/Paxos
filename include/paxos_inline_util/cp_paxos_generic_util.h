@@ -96,7 +96,9 @@ static inline void perform_the_rmw_on_the_loc_entry(mica_op_t *kv_ptr,
 
 
 // free a session held by an RMW
-static inline void free_session_from_rmw(p_ops_t *p_ops, uint16_t sess_id, bool allow_paxos_log,
+static inline void free_session_from_rmw(p_ops_t *p_ops,
+                                         uint16_t sess_id,
+                                         bool allow_paxos_log,
                                          uint16_t t_id)
 {
   loc_entry_t *loc_entry = &p_ops->prop_info->entry[sess_id];

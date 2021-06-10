@@ -12,76 +12,13 @@
 #include "od_stats.h"
 
 
-// RMWs
+
 #define LOCAL_PROP_NUM_ (SESSIONS_PER_THREAD)
 #define LOCAL_PROP_NUM (ENABLE_RMWS == 1 ? LOCAL_PROP_NUM_ : 0)
-
-// this allows for reads to insert reads
-#define PENDING_READS MAX((MAX_OP_BATCH + 1), ((2 * SESSIONS_PER_THREAD) + 2))
-#define PENDING_WRITES_ MAX((MAX_OP_BATCH + 1), ((2 * SESSIONS_PER_THREAD) + 1))
-#define PENDING_WRITES MAX((PENDING_WRITES_) , ((W_CREDITS * MAX_MES_IN_WRITE) + 1))
-#define W_FIFO_SIZE (PENDING_WRITES + LOCAL_PROP_NUM) // Accepts use the write fifo
-
-
-// The w_fifo needs to have a safety slot that cannot be touched
-// such that the fifo push ptr can never coincide with its pull ptr
-// zeroing its coalesce_num, as such we take care to allow
-// one fewer pending write than slots in the w_ifo
-#define MAX_ALLOWED_W_SIZE (PENDING_WRITES - 1)
 #define PROP_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define ACC_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define COM_FIFO_SIZE (LOCAL_PROP_NUM + 1)
 #define COM_ROB_SIZE (LOCAL_PROP_NUM + 1)
-#define MAX_ALLOWED_R_SIZE (PENDING_READS - 1)
-
-
-typedef  struct r_mes_info {
-  uint16_t reads_num; // all non propose messages count as reads
-  uint16_t message_size;
-  uint16_t max_rep_message_size;
-  uint32_t backward_ptr;
-} r_mes_info_t;
-
-
-#define UNUSED_BYTES_IN_REL_BIT_VEC (13 - SEND_CONF_VEC_SIZE)
-struct rel_bit_vec{
-  uint8_t bit_vector[SEND_CONF_VEC_SIZE];
-  uint8_t unused[UNUSED_BYTES_IN_REL_BIT_VEC];
-  uint8_t opcode;
-}__attribute__((__packed__));
-
-typedef struct w_mes_info {
-  uint8_t writes_num; // all non-accept messages: releases, writes, or commits
-  uint16_t message_size;
-  uint16_t max_rep_message_size;
-  uint16_t per_message_sess_id[MAX_MES_IN_WRITE];
-  //used when creating the failure bit vector
-  // and when checking to see if the session is ready to release
-  // can be used for both accepts and releases
-  bool per_message_release_flag[MAX_MES_IN_WRITE];
-  uint32_t backward_ptr;
-  bool is_release;
-  uint16_t first_release_byte_ptr;
-  //this can be used as an L_id offset, as there is a
-  // guarantee that there are no accepts behind it
-  uint8_t first_release_w_i;
-
-  // message contains releases, writes, or commits, and thus has a valid l_id
-  bool valid_header_l_id;
-  bool sent;
-} w_mes_info_t;
-
-
-
-//
-typedef struct write_fifo {
-  struct w_message_template *w_message;
-  uint32_t push_ptr;
-  uint32_t bcast_pull_ptr;
-  uint32_t bcast_size; // number of writes not messages!
-  w_mes_info_t info[W_FIFO_SIZE];
-} write_fifo_t;
-
 
 
 
@@ -201,29 +138,9 @@ struct prop_info {
   // uint64_t l_id; // highest l_id as of yet -- Starts from 1
 };
 
-typedef struct sess_info {
-  bool stalled;
-  bool ready_to_release;
-  uint8_t missing_num;
-  uint8_t missing_ids[REM_MACH_NUM];
-  uint64_t epoch_id;
-  // live writes: writes that have not been acked-
-  // could be ooe-writes in their read phase
-  uint32_t live_writes;
 
-  uint32_t writes_not_yet_inserted; // for debug only
 
-} sess_info_t;
 
-typedef struct per_write_meta {
-  uint8_t w_state;
-  uint8_t acks_seen;
-  uint8_t acks_expected;
-  uint8_t expected_ids[REM_MACH_NUM];
-  bool seen_expected[REM_MACH_NUM];
-
-  uint32_t sess_id;
-} per_write_meta_t;
 
 typedef struct cp_com_rob {
   uint64_t l_id; // for debug
@@ -232,12 +149,6 @@ typedef struct cp_com_rob {
   uint8_t acks_seen;
 } cp_com_rob_t;
 
-struct pending_out_of_epoch_writes {
-  uint32_t size; //number of pending ooe writes
-  uint32_t push_ptr;
-  uint32_t pull_ptr;
-  uint32_t r_info_ptrs[PENDING_READS]; // ptrs to the read_info struct of p_ops
-};
 
 typedef struct trace_op trace_op_t;
 typedef struct cp_p_ops_debug cp_debug_t;
@@ -250,8 +161,6 @@ typedef struct cp_ptr_to_ops {
 } cp_ptrs_to_ops_t;
 
 typedef struct pending_ops {
-	write_fifo_t *w_fifo;
-
   fifo_t *com_rob;
   cp_ptrs_to_ops_t *ptrs_to_ops;
 
@@ -261,45 +170,23 @@ typedef struct pending_ops {
 
   trace_op_t *ops;
 
-  write_t **ptrs_to_local_w; // used for the first phase of release
-  uint8_t *overwritten_values;
-  struct r_message **ptrs_to_mes_headers;
-  bool *coalesce_r_rep;
-  r_info_t *read_info;
-
   struct prop_info *prop_info;
   //
-  struct pending_out_of_epoch_writes *p_ooe_writes;
-  //sess_info_t *sess_info;
+  sess_info_t *sess_info;
+  per_write_meta_t *w_meta;
+
+
   bool *stalled;
-  uint64_t *inserted_prop_id;
-  uint64_t *inserted_acc_id;
-  uint64_t *inserted_com_id;
+  uint64_t inserted_prop_id;
+  uint64_t inserted_acc_id;
+  uint64_t inserted_com_id;
   uint64_t applied_com_id;
 
-  uint64_t local_w_id;
-  uint64_t local_r_id;
-  uint32_t *r_session_id;
-  uint32_t *w_index_to_req_array;
-  uint32_t *r_index_to_req_array;
 
-  uint8_t *r_state;
-  uint32_t w_push_ptr;
-  uint32_t r_push_ptr;
-  uint32_t w_pull_ptr;
-  uint32_t r_pull_ptr;
-  uint32_t w_size; // number of writes in the pending writes (from trace, from reads etc)
-  uint32_t r_size;
-  // virtual read capacity: because acquires can result in one more read,
-  // knowing the capacity of the read fifo is not enough to know if
-  // you can add an element. Virtual read capacity captures this by
-  // getting incremented by 2, every time an acquire is inserted
-	uint32_t virt_r_size;
-  uint32_t virt_w_size;  //
-  per_write_meta_t *w_meta;
-  uint32_t full_w_q_fifo;
+
+
+
   bool all_sessions_stalled;
-  quorum_info_t *q_info;
   cp_debug_t *debug_loop;
 } p_ops_t;
 
@@ -417,56 +304,10 @@ typedef struct trace_op {
   uint32_t real_val_len; // this is the value length the client is interested in
 } trace_op_t;
 
-
-
-// A bit of a bit vector: can be a send bit vector
-// or a configuration bit vector and can be owned
-// by a release or an acquire respectively
-struct a_bit_of_vec {
-  atomic_flag lock;
-  uint8_t bit; // UP_STABLE, DOWN_STABLE, DOWN_TRANSIENT_OWNED
-  uint16_t owner_t_id;
-  uint64_t owner_local_wr_id; // id of a release/acquire that owns the bit
-};
-
-struct bit_vector {
-	// state_lock and state are used only for send_bits (i.e. by releases),
-	// because otherwise every release would have to check every bit
-	// acquires on the other hand need only check one bit
-	atomic_flag state_lock;
-	uint8_t state; // denotes if any bits are raised, to accelerate the common case
-	struct a_bit_of_vec bit_vec[MACHINE_NUM];
-};
-
-// This bit vector shows failures that were identified locally
-// Releases must send out such a failure and clear the corresponding
-// bit after the failure has been quoromized
-extern struct bit_vector send_bit_vector;
-
-//
-struct multiple_owner_bit {
-	atomic_flag lock;
-	uint8_t bit;
-	// this is not the actual sess_i of the owner, but a proxy of it
-	// it counts how many sessions own a bit from a given remote thread
-	uint32_t sess_num[WORKERS_PER_MACHINE];
-	//A bit can be owned only by the machine it belongs to
-	uint64_t owners[WORKERS_PER_MACHINE][SESSIONS_PER_THREAD];
-};
-
-
-// This bit vector shows failures that were identified locally or remotely
-// Remote acquires will read those failures and flip the bits after the have
-// increased their epoch id
-extern struct multiple_owner_bit conf_bit_vec[MACHINE_NUM];
-
-
 extern t_stats_t t_stats[WORKERS_PER_MACHINE];
 struct mica_op;
 extern atomic_uint_fast64_t epoch_id;
 extern const uint16_t machine_bit_id[16];
-
-
 extern FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 
 #endif

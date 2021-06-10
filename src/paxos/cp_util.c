@@ -54,9 +54,9 @@ void cp_static_assert_compile_parameters()
   static_assert(sizeof(cp_acc_mes_t) == ACC_MES_SIZE, "");
   static_assert(sizeof(cp_acc_t) == ACC_SIZE, "");
   static_assert(PROP_REP_ACCEPTED_SIZE == PROP_REP_LOG_TOO_LOW_SIZE + 1, "");
-  static_assert(sizeof(struct rmw_rep_last_committed) == PROP_REP_ACCEPTED_SIZE, "");
-  static_assert(sizeof(struct rmw_rep_message) == PROP_REP_MES_SIZE, "");
-  static_assert(sizeof(struct commit) == COMMIT_SIZE, "");
+  static_assert(sizeof(cp_rmw_rep_t) == PROP_REP_ACCEPTED_SIZE, "");
+  static_assert(sizeof(cp_rmw_rep_mes_t) == PROP_REP_MES_SIZE, "");
+  static_assert(sizeof(cp_com_t) == COM_SIZE, "");
   // UD- REQS
   static_assert(sizeof(cp_prop_mes_ud_t) == PROP_RECV_SIZE, "");
   static_assert(sizeof(cp_acc_mes_ud_t) == ACC_RECV_SIZE, "");
@@ -65,33 +65,17 @@ void cp_static_assert_compile_parameters()
 
   // we want to have more write slots than credits such that we always know that if a machine fails
   // the pressure will appear in the credits and not the write slots
-  static_assert(PENDING_WRITES > (W_CREDITS * MAX_MES_IN_WRITE), " ");
+  //static_assert(PENDING_WRITES > (W_CREDITS * MAX_MES_IN_WRITE), " ");
   // RMWs
   static_assert(!ENABLE_RMWS || LOCAL_PROP_NUM >= SESSIONS_PER_THREAD, "");
   static_assert(GLOBAL_SESSION_NUM < K_64, "global session ids are stored in uint16_t");
-
-  // ACCEPT REPLIES MAP TO PROPOSE REPLIES
-  //static_assert(ACC_REP_SIZE == PROP_REP_LOG_TOO_LOW_SIZE, "");
-  //static_assert(ACC_REP_ACCEPTED_SIZE == PROP_REP_ACCEPTED_SIZE, "");
-
-
 
   static_assert(!(VERIFY_PAXOS && PRINT_LOGS), "only one of those can be set");
 #if VERIFY_PAXOS == 1
   static_assert(EXIT_ON_PRINT == 1, "");
 #endif
-  //static_assert(sizeof(trace_op_t) == 18 + VALUE_SIZE  + 8 + 4, "");
   static_assert(TRACE_ONLY_CAS + TRACE_ONLY_FA + TRACE_MIXED_RMWS == 1, "");
 
-
-//  printf("Client op  %u  %u \n", sizeof(client_op_t), PADDING_BYTES_CLIENT_OP);
-//  printf("Interface \n \n %u  \n \n", sizeof(struct wrk_clt_if));
-
-  static_assert(!(ENABLE_CLIENTS && !ACCEPT_IS_RELEASE && CLIENT_MODE > CLIENT_UI),
-                "If we are using the lock-free data structures rmws must act as releases");
-
-  static_assert(!(ENABLE_CLIENTS && CLIENT_MODE > CLIENT_UI && ENABLE_ALL_ABOARD),
-                "All-aboard does not work with the RC semantics");
 }
 
 void cp_print_parameters_in_the_start()
@@ -376,9 +360,6 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
   p_ops->com_rob = fifo_constructor(COM_ROB_SIZE, sizeof(cp_com_rob_t),
                                     false, 0, 1);
 
-  p_ops->inserted_prop_id = calloc(MACHINE_NUM, sizeof(uint64_t));
-  p_ops->inserted_acc_id = calloc(MACHINE_NUM, sizeof(uint64_t));
-  p_ops->inserted_com_id = calloc(MACHINE_NUM, sizeof(uint64_t));
   p_ops->ptrs_to_ops = calloc(1, sizeof(cp_ptrs_to_ops_t));
 
   uint32_t max_incoming_ops = MAX(MAX_INCOMING_PROP, MAX_INCOMING_ACC);
@@ -391,14 +372,14 @@ p_ops_t* cp_set_up_pending_ops(context_t *ctx)
 
   for (uint32_t i = 0; i < COM_ROB_SIZE; i++) {
     cp_com_rob_t *com_rob = get_fifo_slot(p_ops->com_rob, i);
-    com_rob->com_state = INVALID;
+    com_rob->state = INVALID;
   }
 
 
 // TODO delete
   p_ops->r_session_id = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
   p_ops->r_index_to_req_array = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-  p_ops->read_info = (r_info_t *) calloc(pending_reads, sizeof(r_info_t));
+
   //p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
 
 

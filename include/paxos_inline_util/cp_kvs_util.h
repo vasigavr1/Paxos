@@ -9,14 +9,13 @@
 #include "od_kvs.h"
 #include "cp_generic_util.h"
 #include "cp_debug_util.h"
-#include "cp_config_util.h"
 #include "od_wrkr_side_calls.h"
 #include "cp_paxos_util.h"
 
 
 
 
-// Handle a local rmw in the KVS
+
 static inline void KVS_from_trace_rmw(trace_op_t *op,
                                       mica_op_t *kv_ptr,
                                       p_ops_t *p_ops,
@@ -66,40 +65,6 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
 }
 
 
-// Handle a remote RMW commit message in the KVS
-static inline void KVS_updates_commits(struct commit *com, mica_op_t *kv_ptr,
-                                       p_ops_t *p_ops,
-                                       uint16_t op_i, uint16_t t_id)
-{
-  if (DEBUG_RMW)
-    my_printf(green, "Worker %u is handling a remote RMW commit on com %u, "
-                "rmw_l_id %u, glob_ses_id %u, log_no %u, version %u  \n",
-              t_id, op_i, com->t_rmw_id, com->t_rmw_id % GLOBAL_SESSION_NUM, com->log_no, com->base_ts.version);
-
-  uint64_t number_of_reqs;
-//  number_of_reqs = handle_remote_commit_message(kv_ptr, (void*) com, true, t_id);
-  commit_rmw(kv_ptr, (void*) com, NULL, FROM_REMOTE_COMMIT, t_id);
-
-  if (PRINT_LOGS) {
-    struct w_message *com_mes = (struct w_message *) p_ops->ptrs_to_mes_headers[op_i];
-    uint8_t acc_m_id = com_mes->m_id;
-    fprintf(rmw_verify_fp[t_id], "Key: %u, log %u: Req %lu, Com: m_id:%u, rmw_id %lu, glob_sess id: %u, "
-              "version %u, m_id: %u \n",
-            kv_ptr->key.bkt, com->log_no, number_of_reqs, acc_m_id, com->t_rmw_id,
-            (uint32_t) (com->t_rmw_id % GLOBAL_SESSION_NUM), com->base_ts.version, com->base_ts.m_id);
-  }
-}
-
-
-
-
-/* ---------------------------------------------------------------------------
-//------------------------------ KVS UTILITY SPECIFIC -----------------------------
-//---------------------------------------------------------------------------*/
-
-
-/* The worker sends its local requests to this, reads check the ts_tuple and copy it to the op to get broadcast
- * Writes do not get served either, writes are only propagated here to see whether their keys exist */
 static inline void cp_KVS_batch_op_trace(uint16_t op_num,
                                          trace_op_t *op,
                                          p_ops_t *p_ops,

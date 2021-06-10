@@ -11,7 +11,6 @@
 #include "od_latency_util.h"
 #include "cp_main.h"
 #include "cp_debug_util.h"
-#include "cp_config_util.h"
 #include "cp_paxos_util.h"
 #include "cp_paxos_generic_util.h"
 #include "cp_config.h"
@@ -21,10 +20,6 @@
 //-------------------------------------------------------------------------------------
 static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entry_t *loc_entry,
                                                     uint8_t broadcast_state, uint16_t t_id);
-static inline void fill_commit_message_from_r_info(struct commit *com,
-                                                   r_info_t* r_info, uint16_t t_id);
-
-static inline void KVS_isolated_op(int t_id, write_t *write);
 static inline void create_prop_rep(cp_prop_t *,
                                    cp_prop_mes_t *prop_mes,
                                    cp_rmw_rep_t *,
@@ -152,8 +147,8 @@ static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
   prop_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
   // If it's the first message give it an lid
   if (slot_meta->coalesce_num == 1) {
-    prop_mes->l_id = p_ops->inserted_prop_id[ctx->m_id];
-    p_ops->inserted_prop_id[ctx->m_id]++;
+    prop_mes->l_id = p_ops->inserted_prop_id;
+    p_ops->inserted_prop_id++;
   }
 }
 
@@ -233,9 +228,25 @@ static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
   acc_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
 
   if (slot_meta->coalesce_num == 1) {
-    acc_mes->l_id = p_ops->inserted_acc_id[ctx->m_id];
-    p_ops->inserted_acc_id[ctx->m_id]++;
+    acc_mes->l_id = p_ops->inserted_acc_id;
+    p_ops->inserted_acc_id++;
   }
+}
+
+static inline void fill_com_rob_entry(p_ops_t *p_ops,
+                                      loc_entry_t *loc_entry)
+{
+  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_push_slot(p_ops->com_rob);
+  if (ENABLE_ASSERTIONS) {
+    assert(com_rob->state == INVALID);
+    assert(p_ops->stalled[loc_entry->sess_id]);
+  }
+  com_rob->state = VALID;
+  com_rob->sess_id = loc_entry->sess_id;
+  com_rob->acks_seen = 0;
+  com_rob->l_id = p_ops->inserted_com_id;
+  fifo_incr_push_ptr(p_ops->com_rob);
+  fifo_increm_capacity(p_ops->com_rob);
 }
 
 static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
@@ -244,9 +255,9 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-
   cp_com_t *com = (cp_com_t *) com_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
+
   fill_commit_message_from_l_entry(com, loc_entry, source_flag, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
@@ -254,9 +265,12 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   com_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
 
   if (slot_meta->coalesce_num == 1) {
-    com_mes->l_id = p_ops->inserted_com_id[ctx->m_id];
-    p_ops->inserted_com_id[ctx->m_id]++;
+    com_mes->l_id = p_ops->inserted_com_id;
+    fifo_set_push_backward_ptr(send_fifo, p_ops->com_rob->push_ptr); // for debug
   }
+
+  fill_com_rob_entry(p_ops, loc_entry);
+  p_ops->inserted_com_id++;
 }
 
 
@@ -275,7 +289,8 @@ static inline void cp_apply_acks(context_t *ctx,
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
-      act_on_quorum_of_commit_acks(p_ops, ack_ptr, ctx->t_id);
+      act_on_quorum_of_commit_acks(&p_ops->prop_info[com_rob->sess_id], ack_ptr, ctx->t_id);
+      com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);
   }

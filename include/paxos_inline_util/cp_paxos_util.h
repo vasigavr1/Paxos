@@ -690,7 +690,7 @@ static inline void act_on_quorum_of_commit_acks(p_ops_t *p_ops, uint32_t ack_ptr
 
   if (loc_entry->helping_flag != HELP_PREV_COMMITTED_LOG_TOO_HIGH)
     commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, t_id);
-    //attempt_local_commit(p_ops, loc_entry, t_id);
+
 
   switch(loc_entry->helping_flag)
   {
@@ -863,13 +863,6 @@ static inline void handle_single_rmw_rep(p_ops_t *p_ops, struct rmw_rep_last_com
                                               rep->l_id);
   if (entry_i == -1) return;
   loc_entry_t *loc_entry = &prop_info->entry[entry_i];
-  if (!TURN_OFF_KITE) {
-    if (unlikely(rep->opcode) > NO_OP_PROP_REP) {
-      increment_epoch_id(loc_entry->epoch_id, t_id);
-      rep->opcode -= FALSE_POSITIVE_OFFSET;
-      loc_entry->fp_detected = true;
-    }
-  }
   handle_prop_or_acc_rep(rep_mes, rep, loc_entry, is_accept, t_id);
 }
 
@@ -1576,7 +1569,6 @@ static inline void insert_rmw(context_t *ctx, trace_op_t *op,
     else {
       if (ENABLE_ASSERTIONS) assert(op->ts.version == PAXOS_TS);
       cp_prop_insert(ctx, loc_entry);
-      //insert_prop_to_read_fifo(p_ops, loc_entry, t_id);
     }
   }
   else if (loc_entry->state == NEEDS_KV_PTR) {

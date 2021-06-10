@@ -8,10 +8,8 @@
 #include "cp_generic_util.h"
 #include "cp_kvs_util.h"
 #include "cp_debug_util.h"
-#include "cp_config_util.h"
 #include "cp_paxos_util.h"
 #include "cp_reserve_stations_util.h"
-#include "cp_communication_utility.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +35,6 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   // if there are clients the "all_sessions_stalled" flag is not used,
   // so we need not bother checking it
   if (!ENABLE_CLIENTS && p_ops->all_sessions_stalled) {
-    debug_all_sessions(p_ops, ctx->t_id);
     return;
   }
   for (uint16_t i = 0; i < SESSIONS_PER_THREAD; i++) {
@@ -46,7 +43,6 @@ static inline void batch_requests_to_KVS(context_t *ctx)
       working_session = sess_i;
       break;
     }
-    else debug_sessions(p_ops, sess_i, ctx->t_id);
   }
   //printf("working session = %d\n", working_session);
   if (ENABLE_CLIENTS) {
@@ -141,13 +137,12 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
       loc_entry_t *entry_to_commit =
         state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
       //bool is_commit_helping = loc_entry->helping_flag != NOT_HELPING;
-      if (p_ops->virt_w_size < MAX_ALLOWED_W_SIZE) {
+      if (p_ops->com_rob->capacity < COM_ROB_SIZE) {
         if (state == MUST_BCAST_COMMITS_FROM_HELP && loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED) {
           my_printf(green, "Wrkr %u sess %u will bcast commits for the latest committed RMW,"
                       " after learning its proposed RMW has already been committed \n",
                     t_id, loc_entry->sess_id);
         }
-        insert_write(p_ops, (trace_op_t*) entry_to_commit, FROM_COMMIT, state, t_id);
         cp_com_insert(ctx, loc_entry, state);
         loc_entry->state = COMMITTED;
         continue;
@@ -213,7 +208,7 @@ static inline void cp_acc_rep_helper(context_t *ctx)
 
 static inline void cp_send_ack_helper(context_t *ctx)
 {
-
+  //ctx_refill_recvs(ctx, COM_QP_ID);
 }
 
 /* ---------------------------------------------------------------------------
@@ -343,7 +338,7 @@ inline bool cp_ack_recv_handler(context_t *ctx)
 
   ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
 
-  if (od_is_ack_too_old(ack, p_ops->com_rob, p_ops->applied_com_id;))
+  if (od_is_ack_too_old(ack, p_ops->com_rob, p_ops->applied_com_id))
     return true;
 
   cp_apply_acks(ctx, ack);
@@ -351,71 +346,23 @@ inline bool cp_ack_recv_handler(context_t *ctx)
 }
 
 
-
-
-
-
-// Worker polls for acks
-static inline void poll_acks(context_t *ctx)
+static inline void cp_bookkeep_commits(context_t *ctx)
 {
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
-  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  uint16_t com_num = 0;
   p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  int completed_messages =
-    find_how_many_messages_can_be_polled(qp_meta->recv_cq, qp_meta->recv_wc,
-                                         &qp_meta->completed_but_not_polled,
-                                         qp_meta->recv_buf_slot_num, ctx->t_id);
-  if (completed_messages <= 0) return;
+  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_pull_slot(p_ops->com_rob);
 
-  qp_meta->polled_messages = 0;
-  while (qp_meta->polled_messages < completed_messages) {
-    volatile ctx_ack_mes_ud_t *incoming_acks = (volatile ctx_ack_mes_ud_t *) qp_meta->recv_fifo->fifo;
-    ctx_ack_mes_t *ack = (ctx_ack_mes_t *) &incoming_acks[recv_fifo->pull_ptr].ack;
-    uint32_t ack_num = ack->ack_num;
-    check_ack_message_count_stats(p_ops, ack, recv_fifo->pull_ptr, ack_num, ctx->t_id);
+  while (com_rob->state == READY_COMMIT) {
+    com_rob->state = INVALID;
+    my_printf(green, "Commit sess %u commit %lu\n",
+              com_rob->sess_id, p_ops->applied_com_id + com_num);
 
-    fifo_incr_pull_ptr(recv_fifo);
-    qp_meta->polled_messages++;
-
-    uint64_t l_id = ack->l_id;
-    uint64_t pull_lid = p_ops->local_w_id; // l_id at the pull pointer
-    uint32_t ack_ptr; // a pointer in the FIFO, from where ack should be added
-    //my_printf(green, "Receiving %u write credits, total %u,  from %u \n ",
-    //          ack->credits, ctx->qp_meta[ACC_QP_ID].credits[ack->m_id], ack->m_id);
-    ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
-    // if the pending write FIFO is empty it means the acks are for committed messages.
-    if (p_ops->w_size == 0 ) {
-      ack->opcode = INVALID_OPCODE;
-      ack->ack_num = 0; continue;
-    }
-    if (pull_lid >= l_id) {
-      if ((pull_lid - l_id) >= ack_num) {ack->opcode = 5;
-        ack->ack_num = 0; continue;}
-      ack_num -= (pull_lid - l_id);
-      ack_ptr = p_ops->w_pull_ptr;
-    }
-    else { // l_id > pull_lid
-      ack_ptr = (uint32_t) (p_ops->w_pull_ptr + (l_id - pull_lid)) % PENDING_WRITES;
-    }
-    // Apply the acks that refer to stored writes
-    apply_acks(ack_num, ack_ptr, ack->m_id, l_id,
-               pull_lid, ctx);
-    if (ENABLE_ASSERTIONS) assert(ctx->qp_meta[ACC_QP_ID].credits[ack->m_id] <= W_CREDITS);
-    ack->opcode = INVALID_OPCODE;
-    ack->ack_num = 0;
-  } // while
-
-  if (qp_meta->polled_messages > 0) {
-    if (ENABLE_ASSERTIONS) qp_meta->wait_for_reps_ctr = 0;
+    fifo_incr_pull_ptr(p_ops->com_rob);
+    fifo_decrem_capacity(p_ops->com_rob);
+    com_rob = (cp_com_rob_t *) get_fifo_pull_slot(p_ops->com_rob);
+    com_num++;
   }
-  else {
-    if (ENABLE_ASSERTIONS && ctx->qp_meta[ACC_QP_ID].outstanding_messages > 0)
-      qp_meta->wait_for_reps_ctr++;
-    if (ENABLE_STAT_COUNTING && ctx->qp_meta[ACC_QP_ID].outstanding_messages > 0)
-      t_stats[ctx->t_id].stalled_ack++;
-  }
-  if (ENABLE_ASSERTIONS) assert(qp_meta->recv_info->posted_recvs >= qp_meta->polled_messages);
-  qp_meta->recv_info->posted_recvs -= qp_meta->polled_messages;
+  p_ops->applied_com_id += com_num;
 }
 
 
@@ -486,6 +433,7 @@ _Noreturn static void cp_main_loop(context_t *ctx)
     inspect_rmws(ctx, ctx->t_id);
     ctx_send_broadcasts(ctx, ACC_QP_ID);
     ctx_send_broadcasts(ctx, COM_QP_ID);
+    cp_bookkeep_commits(ctx);
   }
 }
 
