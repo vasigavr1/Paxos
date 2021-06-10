@@ -58,31 +58,6 @@ static inline void check_version(uint32_t version, const char *message) {
   }
 }
 
-static inline void print_wrkr_stats (uint16_t t_id)
-{
-  my_printf(green, "WORKER %u SENT MESSAGES \n", t_id);
-  my_printf(yellow, "Writes sent %ld/%ld \n", t_stats[t_id].writes_sent_mes_num, t_stats[t_id].writes_sent);
-  my_printf(yellow, "Acks sent %ld/%ld \n", t_stats[t_id].acks_sent_mes_num, t_stats[t_id].acks_sent);
-  my_printf(yellow, "Reads sent %ld/%ld \n", t_stats[t_id].reads_sent_mes_num, t_stats[t_id].reads_sent);
-  my_printf(yellow, "R_reps sent %ld/%ld \n", t_stats[t_id].r_reps_sent_mes_num, t_stats[t_id].r_reps_sent);
-  my_printf(green, "WORKER %u RECEIVED MESSAGES \n", t_id);
-  //my_printf(yellow, "Writes sent %ld/%ld \n", t_stats[g_id].writes_sent_mes_num, t_stats[g_id].writes_sent);
-  //my_printf(yellow, "Acks sent %ld/%ld \n", t_stats[g_id].acks_sent_mes_num, t_stats[g_id].acks_sent);
-  my_printf(yellow, "Reads received %ld/%ld \n", t_stats[t_id].received_reads_mes_num, t_stats[t_id].received_reads);
-  my_printf(yellow, "R_reps received %ld/%ld \n", t_stats[t_id].received_r_reps_mes_num, t_stats[t_id].received_r_reps);
-
-  for (uint8_t i = 0; i < MACHINE_NUM; i++) {
-    if (i == machine_id) continue;
-    my_printf(cyan, "FROM/ TO MACHINE %u \n", i);
-    my_printf(yellow, "Acks Received %lu/%lu from machine id %u \n", t_stats[t_id].per_worker_acks_mes_received[i],
-              t_stats[t_id].per_worker_acks_received[i], i);
-    my_printf(yellow, "Writes Received %lu from machine id %u\n", t_stats[t_id].per_worker_writes_received[i], i);
-    my_printf(yellow, "Acks Sent %lu/%lu to machine id %u \n", t_stats[t_id].per_worker_acks_mes_sent[i],
-              t_stats[t_id].per_worker_acks_sent[i], i);
-
-  }
-//  my_printf(yellow, "Reads sent %ld/%ld \n", t_stats[g_id].r_reps_sent_mes_num, t_stats[g_id].r_reps_sent );
-}
 
 // Print the rep info received for a propose or an accept
 static inline void print_rmw_rep_info(loc_entry_t *loc_entry, uint16_t t_id) {
@@ -100,7 +75,7 @@ static inline void print_rmw_rep_info(loc_entry_t *loc_entry, uint16_t t_id) {
 
 
 // When pulling a new req from the trace, check the req and the working session
-static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *op,
+static inline void check_trace_req(cp_ctx_t *cp_ctx, trace_t *trace, trace_op_t *op,
                                    int working_session, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
@@ -109,11 +84,11 @@ static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *o
                                    OP_ACQUIRE, KVS_OP_GET, FETCH_AND_ADD, COMPARE_AND_SWAP_WEAK,
                                    COMPARE_AND_SWAP_STRONG);
     assert(op->opcode == trace->opcode);
-    assert(!p_ops->stalled[working_session]);
-    if (ENABLE_RMWS && p_ops->prop_info->entry[working_session].state != INVALID_RMW) {
+    assert(!cp_ctx->stall_info.stalled[working_session]);
+    if (ENABLE_RMWS && cp_ctx->prop_info->entry[working_session].state != INVALID_RMW) {
       my_printf(cyan, "wrk %u  Session %u has loc_entry state %u , helping flag %u\n", t_id,
-                working_session, p_ops->prop_info->entry[working_session].state,
-                p_ops->prop_info->entry[working_session].helping_flag);
+                working_session, cp_ctx->prop_info->entry[working_session].state,
+                cp_ctx->prop_info->entry[working_session].helping_flag);
       assert(false);
     }
   }
@@ -122,7 +97,7 @@ static inline void check_trace_req(p_ops_t *p_ops, trace_t *trace, trace_op_t *o
 
 static inline void send_prop_checks(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
@@ -158,7 +133,7 @@ static inline void send_prop_checks(context_t *ctx)
 
 static inline void send_acc_checks(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
@@ -194,7 +169,7 @@ static inline void send_acc_checks(context_t *ctx)
 
 static inline void send_com_checks(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
@@ -233,7 +208,7 @@ static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
   if (!ENABLE_ASSERTIONS) return;
 
   bool is_accept = qp_id == ACC_QP_ID;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
@@ -289,34 +264,14 @@ static inline void checks_when_forging_a_commit(struct commit *com, struct ibv_s
 }
 
 
-
-
-
-static inline void print_thread_stats(uint16_t t_id) {
-
-  my_printf(yellow, "Cache hits: %u \nReads: %lu \nWrites: %lu \nReleases: %lu \nAcquires: %lu \nQ Reads: %lu "
-              "\nRectified keys %lu\n",
-            t_stats[t_id].cache_hits_per_thread, t_stats[t_id].reads_per_thread,
-            t_stats[t_id].writes_per_thread, t_stats[t_id].releases_per_thread,
-            t_stats[t_id].acquires_per_thread, t_stats[t_id].quorum_reads,
-            t_stats[t_id].rectified_keys);
-}
-
-
-
-
-
-
-
-
-static inline void print_all_stalled_sessions(p_ops_t *p_ops, uint16_t t_id)
+static inline void print_all_stalled_sessions(cp_ctx_t *cp_ctx, uint16_t t_id)
 {
   uint32_t count = 0;
   for (uint16_t sess_i = 0; sess_i < SESSIONS_PER_THREAD; sess_i++) {
     uint32_t glob_sess_i = get_glob_sess_id((uint8_t) machine_id, t_id, sess_i);
 
-    if (p_ops->sess_info[sess_i].stalled) {
-      loc_entry_t *loc_entry = &p_ops->prop_info->entry[sess_i];
+    if (cp_ctx->stall_info.stalled) {
+      loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[sess_i];
       if (!count) {
         my_printf(yellow, "----------------------------------------\n");
         my_printf(yellow, "WORKER %u STALLED SESSIONS\n", t_id);
@@ -417,17 +372,17 @@ static inline void  cp_check_ack_and_print(context_t *ctx,
                                            uint16_t  ack_num)
 {
   if (ENABLE_ASSERTIONS) {
-    p_ops_t* p_ops = (p_ops_t*) ctx->appl_ctx;
+    cp_ctx_t* cp_ctx = (cp_ctx_t*) ctx->appl_ctx;
     per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
-    uint64_t pull_lid = p_ops->applied_com_id;
-    if (ENABLE_ASSERTIONS && (ack_ptr == p_ops->com_rob->push_ptr)) {
+    uint64_t pull_lid = cp_ctx->l_ids.applied_com_id;
+    if (ENABLE_ASSERTIONS && (ack_ptr == cp_ctx->com_rob->push_ptr)) {
       uint32_t origin_ack_ptr = (uint32_t) (ack_ptr - ack_i + COM_ROB_SIZE) % COM_ROB_SIZE;
       my_printf(red, "Origin ack_ptr %u/%u, acks %u/%u, pull_ptr %u, push_ptr % u, capacity %u \n",
-                origin_ack_ptr, (p_ops->com_rob->pull_ptr + (ack->l_id - pull_lid)) % COM_ROB_SIZE,
-                ack_i, ack_num, p_ops->com_rob->pull_ptr, p_ops->com_rob->push_ptr, p_ops->com_rob->capacity);
+                origin_ack_ptr, (cp_ctx->com_rob->pull_ptr + (ack->l_id - pull_lid)) % COM_ROB_SIZE,
+                ack_i, ack_num, cp_ctx->com_rob->pull_ptr, cp_ctx->com_rob->push_ptr, cp_ctx->com_rob->capacity);
     }
 
-    assert((com_rob->l_id % p_ops->com_rob->max_size) == ack_ptr);
+    assert((com_rob->l_id % cp_ctx->com_rob->max_size) == ack_ptr);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
       qp_meta->outstanding_messages--;
       assert(com_rob->state == SENT_COMMIT);
@@ -714,9 +669,9 @@ static inline void check_when_polling_for_props(context_t* ctx,
   }
   if (ENABLE_STAT_COUNTING) {
     if (ENABLE_ASSERTIONS)
-      t_stats[ctx->t_id].per_worker_reads_received[prop_mes->m_id] += coalesce_num;
-    t_stats[ctx->t_id].received_reads += coalesce_num;
-    t_stats[ctx->t_id].received_reads_mes_num++;
+      t_stats[ctx->t_id].per_worker_props_received[prop_mes->m_id] += coalesce_num;
+    t_stats[ctx->t_id].received_props += coalesce_num;
+    t_stats[ctx->t_id].received_props_mes_num++;
   }
 }
 
@@ -1159,7 +1114,7 @@ static inline void check_state_before_commit_algorithm(mica_op_t *kv_ptr,
 //------------------------------HELP STUCK RMW------------------------------------------
 
 static inline void
-checks_and_prints_proposed_but_not_locally_acked(p_ops_t *p_ops,
+checks_and_prints_proposed_but_not_locally_acked(cp_ctx_t *cp_ctx,
                                                  mica_op_t *kv_ptr,
                                                  loc_entry_t * loc_entry,
                                                  uint16_t t_id)
@@ -1174,7 +1129,7 @@ checks_and_prints_proposed_but_not_locally_acked(p_ops_t *p_ops,
               loc_entry->help_rmw->rmw_id.id, loc_entry->help_rmw->state);
 
   if (ENABLE_ASSERTIONS) {
-    assert(p_ops->sess_info[loc_entry->sess_id].stalled);
+    assert(cp_ctx->stall_info.stalled);
     assert(loc_entry->rmw_reps.tot_replies == 0);
   }
 }

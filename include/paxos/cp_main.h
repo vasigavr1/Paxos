@@ -22,34 +22,6 @@
 
 
 
-//
-typedef struct read_info{
-  uint8_t rep_num; // replies num
-  uint8_t times_seen_ts;
-  bool seen_larger_ts; // used also for log numbers for rmw_acquires
-	uint8_t opcode;
-  ts_tuple_t ts_to_read;
-  struct key key;
-	// the value read locally, a greater value received or
-	// in case of a 2-round write, the value to be written
-  uint8_t value[VALUE_SIZE]; //
-  uint8_t *value_to_read;
-  bool fp_detected; //detected false positive
-  uint64_t epoch_id;
-  bool is_read;
-  bool complete_flag; // denotes whether completion must be signaled to the client
-  uint32_t r_ptr; // reverse ptr to the p_ops
-  uint32_t log_no;
-  uint32_t val_len;
-  struct rmw_id rmw_id;
-
-  // when a data out-of-epoch write is inserted in a write message,
-  // there is a chance we may need to change its version, so we need to
-  // remember where it is stored in the w_fifo -- NOT NEEDED
-  //  uint32_t w_mes_ptr;
-  //  uint8_t inside_w_ptr;
-} r_info_t ;
-
 struct dbg_glob_entry {
   ts_tuple_t last_committed_ts;
   uint32_t last_committed_log_no;
@@ -83,7 +55,7 @@ typedef struct rmw_rep_info {
   uint8_t seen_higher_prop_acc; // Seen a higher prop or accept
   uint8_t log_too_high;
   uint8_t nacks;
-  bool no_need_to_bcast; // raised when an alrea-committed reply does not trigger commit bcasts, because it refers to a later log
+  bool no_need_to_bcast; // raised when an already-committed reply does not trigger commit bcasts, because it refers to a later log
   bool ready_to_inspect;
   bool inspected;
   // used to know whether to help after a prop-- if you have seen a higher acc,
@@ -151,7 +123,7 @@ typedef struct cp_com_rob {
 
 
 typedef struct trace_op trace_op_t;
-typedef struct cp_p_ops_debug cp_debug_t;
+typedef struct cp_cp_ctx_debug cp_debug_t;
 
 typedef struct cp_ptr_to_ops {
   uint16_t polled_ops;
@@ -160,35 +132,25 @@ typedef struct cp_ptr_to_ops {
   bool *break_message;
 } cp_ptrs_to_ops_t;
 
-typedef struct pending_ops {
-  fifo_t *com_rob;
-  cp_ptrs_to_ops_t *ptrs_to_ops;
-
-  trace_t *trace;
-  uint32_t trace_iter;
-  uint16_t last_session;
-
-  trace_op_t *ops;
-
-  struct prop_info *prop_info;
-  //
-  sess_info_t *sess_info;
-  per_write_meta_t *w_meta;
 
 
-  bool *stalled;
+struct l_ids {
   uint64_t inserted_prop_id;
   uint64_t inserted_acc_id;
   uint64_t inserted_com_id;
   uint64_t applied_com_id;
+};
 
-
-
-
-
-  bool all_sessions_stalled;
+typedef struct cp_ctx {
+  fifo_t *com_rob;
+  cp_ptrs_to_ops_t *ptrs_to_ops;
+  trace_info_t trace_info;
+  trace_op_t *ops;
+  struct prop_info *prop_info;
+  sess_stall_t stall_info;
+  struct l_ids l_ids;
   cp_debug_t *debug_loop;
-} p_ops_t;
+} cp_ctx_t;
 
 // A helper to debug sessions by remembering which write holds a given session
 struct session_dbg {
@@ -197,7 +159,7 @@ struct session_dbg {
 	//uint32_t request_id[SESSIONS_PER_THREAD];
 };
 
-typedef struct cp_p_ops_debug {
+typedef struct cp_cp_ctx_debug {
   bool slept;
   uint64_t loop_counter;
   uint32_t sizes_dbg_cntr;
@@ -225,53 +187,17 @@ typedef struct commit_info {
 typedef struct thread_stats {
   long long cache_hits_per_thread;
 
-  uint64_t reads_per_thread;
-  uint64_t writes_per_thread;
-  uint64_t acquires_per_thread;
-  uint64_t releases_per_thread;
-
-
-
-  long long reads_sent;
   long long acks_sent;
-  long long r_reps_sent;
-  uint64_t writes_sent;
-  uint64_t writes_asked_by_clients;
-
-
-  long long reads_sent_mes_num;
   long long acks_sent_mes_num;
-  long long r_reps_sent_mes_num;
-  long long writes_sent_mes_num;
-
-
-  long long received_reads;
-  long long received_acks;
-  long long received_r_reps;
-  long long received_writes;
-
-  long long received_r_reps_mes_num;
   long long received_acks_mes_num;
-  long long received_reads_mes_num;
-  long long received_writes_mes_num;
-
-
   uint64_t per_worker_acks_sent[MACHINE_NUM];
   uint64_t per_worker_acks_mes_sent[MACHINE_NUM];
-  uint64_t per_worker_writes_received[MACHINE_NUM];
   uint64_t per_worker_acks_received[MACHINE_NUM];
   uint64_t per_worker_acks_mes_received[MACHINE_NUM];
+  uint64_t per_worker_props_received[MACHINE_NUM];
 
-  uint64_t per_worker_reads_received[MACHINE_NUM];
-  uint64_t per_worker_r_reps_received[MACHINE_NUM];
-
-
-  uint64_t read_to_write;
-  uint64_t failed_rem_writes;
-  uint64_t total_writes;
-  uint64_t quorum_reads;
-  uint64_t rectified_keys;
-  uint64_t q_reads_with_low_epoch;
+  uint64_t received_props;
+  uint64_t received_props_mes_num;
 
   uint64_t proposes_sent; // number of broadcast
   uint64_t accepts_sent; // number of broadcast
@@ -280,10 +206,7 @@ typedef struct thread_stats {
   uint64_t cancelled_rmws;
   uint64_t all_aboard_rmws; // completed ones
 
-
-
   uint64_t stalled_ack;
-  uint64_t stalled_r_rep;
 
   //long long unused[3]; // padding to avoid false sharing
 } t_stats_t;
@@ -306,8 +229,6 @@ typedef struct trace_op {
 
 extern t_stats_t t_stats[WORKERS_PER_MACHINE];
 struct mica_op;
-extern atomic_uint_fast64_t epoch_id;
-extern const uint16_t machine_bit_id[16];
 extern FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 
 #endif

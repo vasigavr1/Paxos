@@ -18,11 +18,11 @@
 
 static inline void KVS_from_trace_rmw(trace_op_t *op,
                                       mica_op_t *kv_ptr,
-                                      p_ops_t *p_ops,
+                                      cp_ctx_t *cp_ctx,
                                       uint16_t op_i, uint16_t t_id)
 {
-  loc_entry_t *loc_entry = &p_ops->prop_info->entry[op->session_id];
-  init_loc_entry(p_ops, op, t_id, loc_entry);
+  loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[op->session_id];
+  init_loc_entry(cp_ctx, op, t_id, loc_entry);
   if (DEBUG_RMW) my_printf(green, "Worker %u trying a local RMW on op %u\n", t_id, op_i);
   uint32_t new_version = (ENABLE_ALL_ABOARD && op->attempt_all_aboard) ?
                          ALL_ABOARD_TS : PAXOS_TS;
@@ -67,7 +67,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
 
 static inline void cp_KVS_batch_op_trace(uint16_t op_num,
                                          trace_op_t *op,
-                                         p_ops_t *p_ops,
+                                         cp_ctx_t *cp_ctx,
                                          uint16_t t_id)
 {
   uint16_t op_i;
@@ -88,7 +88,7 @@ static inline void cp_KVS_batch_op_trace(uint16_t op_num,
       case COMPARE_AND_SWAP_STRONG:
       case RMW_PLAIN_WRITE:
         KVS_from_trace_rmw(&op[op_i], kv_ptr[op_i],
-                           p_ops, op_i, t_id);
+                           cp_ctx, op_i, t_id);
         break;
       default: if (ENABLE_ASSERTIONS) {
           my_printf(red, "Wrkr %u: KVS_batch_op_trace wrong opcode in KVS: %d, req %d \n",
@@ -103,8 +103,8 @@ static inline void cp_KVS_batch_op_trace(uint16_t op_num,
 
 static inline void cp_KVS_batch_op_props(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  cp_ptrs_to_ops_t *ptrs_to_prop = p_ops->ptrs_to_ops;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_prop = cp_ctx->ptrs_to_ops;
   cp_prop_t **props = (cp_prop_t **) ptrs_to_prop->ptr_to_ops;
   uint16_t op_num = ptrs_to_prop->polled_ops;
   uint16_t op_i;
@@ -140,8 +140,8 @@ static inline void cp_KVS_batch_op_props(context_t *ctx)
 
 static inline void cp_KVS_batch_op_accs(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  cp_ptrs_to_ops_t *ptrs_to_acc = p_ops->ptrs_to_ops;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_acc = cp_ctx->ptrs_to_ops;
   cp_acc_t **accs = (cp_acc_t **) ptrs_to_acc->ptr_to_ops;
   uint16_t op_num = ptrs_to_acc->polled_ops;
   uint16_t op_i;
@@ -176,8 +176,8 @@ static inline void cp_KVS_batch_op_accs(context_t *ctx)
 
 static inline void cp_KVS_batch_op_coms(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  cp_ptrs_to_ops_t *ptrs_to_com = p_ops->ptrs_to_ops;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_com = cp_ctx->ptrs_to_ops;
   cp_com_t **coms = (cp_com_t **) ptrs_to_com->ptr_to_ops;
   uint16_t op_num = ptrs_to_com->polled_ops;
   uint16_t op_i;

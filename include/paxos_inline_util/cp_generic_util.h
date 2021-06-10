@@ -144,9 +144,7 @@ static inline uint8_t sum_of_reps(struct rmw_rep_info* rmw_reps)
 static inline void increment_per_req_counters(uint8_t opcode, uint16_t t_id)
 {
   if (ENABLE_STAT_COUNTING) {
-    if (opcode == KVS_OP_PUT) t_stats[t_id].writes_per_thread++;
-    else if (opcode == KVS_OP_GET) t_stats[t_id].reads_per_thread++;
-    else  t_stats[t_id].rmws_completed++;
+    t_stats[t_id].rmws_completed++;
   }
 }
 
@@ -211,13 +209,13 @@ static inline uint16_t get_write_size_from_opcode(uint8_t opcode) {
     case OP_RELEASE_BIT_VECTOR:
     case OP_RELEASE_SECOND_ROUND:
     case NO_OP_RELEASE:
-      return W_SIZE;
+      assert(false);
     case ACCEPT_OP:
     case ACCEPT_OP_BIT_VECTOR:
       return ACC_SIZE;
     case COMMIT_OP:
     case RMW_ACQ_COMMIT_OP:
-      return COMMIT_SIZE;
+      return COM_SIZE;
     case COMMIT_OP_NO_VAL:
       return COMMIT_NO_VAL_SIZE;
     default: if (ENABLE_ASSERTIONS) assert(false);

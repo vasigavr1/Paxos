@@ -9,7 +9,6 @@
 #include "cp_main.h"
 #include "cp_debug_util.h"
 #include "od_wrkr_side_calls.h"
-#include "cp_config_util.h"
 #include "cp_reserve_stations_util.h"
 
 
@@ -96,16 +95,16 @@ static inline void perform_the_rmw_on_the_loc_entry(mica_op_t *kv_ptr,
 
 
 // free a session held by an RMW
-static inline void free_session_from_rmw(p_ops_t *p_ops,
+static inline void free_session_from_rmw(cp_ctx_t *cp_ctx,
                                          uint16_t sess_id,
                                          bool allow_paxos_log,
                                          uint16_t t_id)
 {
-  loc_entry_t *loc_entry = &p_ops->prop_info->entry[sess_id];
+  loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[sess_id];
   if (ENABLE_ASSERTIONS) {
     assert(sess_id < SESSIONS_PER_THREAD);
     assert(loc_entry->state == INVALID_RMW);
-    if(!p_ops->sess_info[sess_id].stalled) {
+    if(!cp_ctx->stall_info.stalled[sess_id]) {
       my_printf(red, "Wrkr %u sess %u should be stalled \n", t_id, sess_id);
       assert(false);
     }
@@ -115,8 +114,8 @@ static inline void free_session_from_rmw(p_ops_t *p_ops,
   if (VERIFY_PAXOS && allow_paxos_log) verify_paxos(loc_entry, t_id);
   // my_printf(cyan, "Session %u completing \n", loc_entry->glob_sess_id);
   signal_completion_to_client(sess_id, loc_entry->index_to_req_array, t_id);
-  p_ops->sess_info[sess_id].stalled = false;
-  p_ops->all_sessions_stalled = false;
+  cp_ctx->stall_info.stalled[sess_id] = false;
+  cp_ctx->stall_info.all_stalled = false;
 }
 
 
@@ -345,20 +344,20 @@ static inline bool kv_ptr_state_has_changed(mica_op_t *kv_ptr,
 static inline void advance_loc_entry_l_id(loc_entry_t *loc_entry,
                                           uint16_t t_id)
 {
-  loc_entry->l_id += SESSIONS_PER_THREAD; //p_ops->prop_info->l_id;
-  loc_entry->help_loc_entry->l_id = loc_entry->l_id;// p_ops->prop_info->l_id;
+  loc_entry->l_id += SESSIONS_PER_THREAD; //cp_ctx->prop_info->l_id;
+  loc_entry->help_loc_entry->l_id = loc_entry->l_id;// cp_ctx->prop_info->l_id;
   if (ENABLE_ASSERTIONS) assert(loc_entry->l_id % SESSIONS_PER_THREAD == loc_entry->sess_id);
-  // p_ops->prop_info->l_id++;
+  // cp_ctx->prop_info->l_id++;
 }
 
 //
-static inline bool if_already_committed_bcast_commits(p_ops_t *p_ops,
+static inline bool if_already_committed_bcast_commits(cp_ctx_t *cp_ctx,
                                                       loc_entry_t *loc_entry,
                                                       uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
     assert(loc_entry->state != INVALID_RMW);
-    assert(loc_entry == &p_ops->prop_info->entry[loc_entry->sess_id]);
+    assert(loc_entry == &cp_ctx->prop_info->entry[loc_entry->sess_id]);
     assert(loc_entry->helping_flag != HELPING);
   }
   if (loc_entry->rmw_id.id <= committed_glob_sess_rmw_id[loc_entry->glob_sess_id]) {
@@ -460,26 +459,6 @@ static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entr
       assert(com->log_no > 0);
       assert(com->t_rmw_id > 0);
     }
-  }
-}
-
-// Fill a write message with a commit from read info, after an rmw acquire
-static inline void fill_commit_message_from_r_info(struct commit *com,
-                                                   r_info_t* r_info, uint16_t t_id)
-{
-  com->base_ts.m_id = r_info->ts_to_read.m_id;
-  com->base_ts.version = r_info->ts_to_read.version;
-  memcpy(&com->key, &r_info->key, KEY_SIZE);
-  assert(r_info->key.bkt != 0);
-  assert(com->key.bkt != 0);
-  com->opcode = RMW_ACQ_COMMIT_OP;
-  memcpy(com->value, r_info->value, r_info->val_len);
-  com->t_rmw_id = r_info->rmw_id.id;
-  com->log_no = r_info->log_no;
-  //my_printf(yellow, "Broadcasting commit log %u, rmw_id %u, key %u \n", com->log_no, com->t_rmw_id, com->key.bkt);
-  if (ENABLE_ASSERTIONS) {
-    //assert(com->log_no > 0);
-    //assert(com->t_rmw_id > 0);
   }
 }
 

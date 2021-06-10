@@ -3,13 +3,7 @@
 #include "cp_util.h"
 #include "od_generic_inline_util.h"
 
-struct bit_vector send_bit_vector;
-struct multiple_owner_bit conf_bit_vec[MACHINE_NUM];
-
-atomic_uint_fast64_t epoch_id;
 atomic_bool print_for_debug;
-const uint16_t machine_bit_id[SEND_CONF_VEC_SIZE * 8] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
-                                                         1024, 2048, 4096, 8192, 16384, 32768};
 atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 FILE* client_log[CLIENTS_PER_MACHINE];
@@ -89,59 +83,11 @@ void cp_print_parameters_in_the_start()
 
     printf("Rmw-local_entry %ld \n", sizeof(loc_entry_t));
     printf("quorum-num %d \n", QUORUM_NUM);
-
-    //my_printf(green, "READ REPLY: r_rep message %lu/%d, r_rep message ud req %llu/%d,"
-    //            "read info %llu\n",
-    //          sizeof(struct r_rep_message), R_REP_SEND_SIZE,
-    //          sizeof(r_rep_mes_ud_t), R_REP_RECV_SIZE,
-    //          sizeof(r_info_t));
-    //my_printf(green, "W_COALESCE %d, R_COALESCE %d, ACC_COALESCE %u, "
-    //            "PROPOSE COALESCE %d, COM_COALESCE %d, MAX_WRITE_COALESCE %d,"
-    //            "PROP_COALESCE %d \n",
-    //          W_COALESCE, R_COALESCE, ACC_COALESCE, PROP_COALESCE, COM_COALESCE,
-    //          MAX_WRITE_COALESCE, PROP_COALESCE);
-    //
-    //
-    //my_printf(cyan, "ACK: ack message %lu/%d, ack message ud req %llu/%d\n",
-    //          sizeof(ctx_ack_mes_t), CTX_ACK_SIZE,
-    //          sizeof(ctx_ack_mes_ud_t), CTX_ACK_RECV_SIZE);
-    //my_printf(yellow, "READ: read %lu/%d, read message %lu/%d, read message ud req %lu/%d\n",
-    //          sizeof(struct read), R_SIZE,
-    //          sizeof(struct r_message), PRP_MES_SIZE,
-    //          sizeof(r_mes_ud_t), PROP_RECV_SIZE);
-    //my_printf(cyan, "Write: write %lu/%d, write message %lu/%d, write message ud req %llu/%d\n",
-    //          sizeof(write_t), W_SIZE,
-    //          sizeof(struct w_message), W_SEND_SIZE,
-    //          sizeof(w_mes_ud_t), W_RECV_SIZE);
-    //
-    //my_printf(green, "W INLINING %d, PENDING WRITES %d \n",
-    //          W_ENABLE_INLINING, PENDING_WRITES);
-    //
-    //my_printf(green, "R_REP INLINING %d \n",
-    //          R_REP_ENABLE_INLINING);
-    //my_printf(cyan, "W CREDITS %d, W BUF SLOTS %d, W BUF SIZE %d\n",
-    //          W_CREDITS, W_BUF_SLOTS, W_BUF_SIZE);
-    //
-    //my_printf(yellow, "Remote Quorum Machines %d \n", REMOTE_QUORUM);
-    //my_printf(green, "SEND W DEPTH %d, MESSAGES_IN_BCAST_BATCH %d, W_BCAST_SS_BATCH %d \n",
-    //          SEND_W_Q_DEPTH, MESSAGES_IN_BCAST_BATCH, W_BCAST_SS_BATCH);
   }
 }
 
 void cp_init_globals()
 {
-  uint32_t i = 0;
-  epoch_id = MEASURE_SLOW_PATH ? 1 : 0;
-  // This (sadly) seems to be the only way to initialize the locks
-  // in struct_bit_vector, i.e. the atomic_flags
-  memset(&send_bit_vector, 0, sizeof(struct bit_vector));
-  memset(conf_bit_vec, 0, MACHINE_NUM * sizeof(struct multiple_owner_bit));
-
-  for (i = 0; i < MACHINE_NUM; i++) {
-    conf_bit_vec[i].bit = UP_STABLE;
-    send_bit_vector.bit_vec[i].bit = UP_STABLE;
-  }
-  send_bit_vector.state = UP_STABLE;
   memset(committed_glob_sess_rmw_id, 0, GLOBAL_SESSION_NUM * sizeof(uint64_t));
 }
 
@@ -330,12 +276,12 @@ cp_debug_t *init_debug_loop_struct()
   return loop_dbg;
 }
 
-void cp_init_loc_entry(p_ops_t *p_ops, uint16_t t_id)
+void cp_init_loc_entry(cp_ctx_t *cp_ctx, uint16_t t_id)
 {
-  p_ops->prop_info = (struct prop_info *)malloc(sizeof(struct prop_info));
-  memset(p_ops->prop_info, 0, sizeof(struct prop_info));
+  cp_ctx->prop_info = (struct prop_info *)malloc(sizeof(struct prop_info));
+  memset(cp_ctx->prop_info, 0, sizeof(struct prop_info));
   for (uint32_t i = 0; i < LOCAL_PROP_NUM; i++) {
-    loc_entry_t *loc_entry = &p_ops->prop_info->entry[i];
+    loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[i];
     loc_entry->sess_id = (uint16_t) i;
     loc_entry->glob_sess_id = get_glob_sess_id((uint8_t)machine_id, t_id, (uint16_t) i);
     loc_entry->l_id = (uint64_t) loc_entry->sess_id;
@@ -350,46 +296,31 @@ void cp_init_loc_entry(p_ops_t *p_ops, uint16_t t_id)
 }
 
 // Initialize the pending ops struct
-p_ops_t* cp_set_up_pending_ops(context_t *ctx)
+cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)
 {
-  uint32_t pending_reads = (uint32_t) PENDING_READS;
-
-
-  p_ops_t *p_ops = (p_ops_t *) calloc(1, sizeof(p_ops_t));
-
-  p_ops->com_rob = fifo_constructor(COM_ROB_SIZE, sizeof(cp_com_rob_t),
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) calloc(1, sizeof(cp_ctx_t));
+  cp_ctx->com_rob = fifo_constructor(COM_ROB_SIZE, sizeof(cp_com_rob_t),
                                     false, 0, 1);
 
-  p_ops->ptrs_to_ops = calloc(1, sizeof(cp_ptrs_to_ops_t));
-
+  cp_ctx->ptrs_to_ops = calloc(1, sizeof(cp_ptrs_to_ops_t));
   uint32_t max_incoming_ops = MAX(MAX_INCOMING_PROP, MAX_INCOMING_ACC);
-  p_ops->ptrs_to_ops->ptr_to_ops = calloc(max_incoming_ops, sizeof(void*));
-  p_ops->ptrs_to_ops->ptr_to_mes = calloc(max_incoming_ops, sizeof(void*));
-  p_ops->ptrs_to_ops->break_message = calloc(max_incoming_ops, sizeof(bool));
+  cp_ctx->ptrs_to_ops->ptr_to_ops = calloc(max_incoming_ops, sizeof(void*));
+  cp_ctx->ptrs_to_ops->ptr_to_mes = calloc(max_incoming_ops, sizeof(void*));
+  cp_ctx->ptrs_to_ops->break_message = calloc(max_incoming_ops, sizeof(bool));
 
-  cp_init_loc_entry(p_ops, ctx->t_id);
-  p_ops->stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
-
+  cp_init_loc_entry(cp_ctx, ctx->t_id);
+  cp_ctx->stall_info.stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
   for (uint32_t i = 0; i < COM_ROB_SIZE; i++) {
-    cp_com_rob_t *com_rob = get_fifo_slot(p_ops->com_rob, i);
+    cp_com_rob_t *com_rob = get_fifo_slot(cp_ctx->com_rob, i);
     com_rob->state = INVALID;
   }
-
-
-// TODO delete
-  p_ops->r_session_id = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-  p_ops->r_index_to_req_array = (uint32_t *) calloc(pending_reads, sizeof(uint32_t));
-
-  //p_ops->w_meta = (per_write_meta_t *) calloc(pending_writes, sizeof(per_write_meta_t));
-
-
-  p_ops->ops = (trace_op_t *) calloc(MAX_OP_BATCH, sizeof(trace_op_t));
-  randomize_op_values(p_ops->ops, ctx->t_id);
+  cp_ctx->ops = (trace_op_t *) calloc(MAX_OP_BATCH, sizeof(trace_op_t));
+  randomize_op_values(cp_ctx->ops, ctx->t_id);
   if (!ENABLE_CLIENTS)
-    p_ops->trace = trace_init(ctx->t_id);
+    cp_ctx->trace_info.trace = trace_init(ctx->t_id);
 
-  p_ops->debug_loop = init_debug_loop_struct();
- return p_ops;
+  cp_ctx->debug_loop = init_debug_loop_struct();
+ return cp_ctx;
 }
 
 

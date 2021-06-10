@@ -26,20 +26,20 @@
 static inline void batch_requests_to_KVS(context_t *ctx)
 {
 
-  p_ops_t* p_ops = (p_ops_t*) ctx->appl_ctx;
-  trace_op_t *ops = p_ops->ops;
-  trace_t *trace = p_ops->trace;
+  cp_ctx_t* cp_ctx = (cp_ctx_t*) ctx->appl_ctx;
+  trace_op_t *ops = cp_ctx->ops;
+  trace_t *trace = cp_ctx->trace_info.trace;
 
   uint16_t writes_num = 0, reads_num = 0, op_i = 0;
   int working_session = -1;
   // if there are clients the "all_sessions_stalled" flag is not used,
   // so we need not bother checking it
-  if (!ENABLE_CLIENTS && p_ops->all_sessions_stalled) {
+  if (!ENABLE_CLIENTS && cp_ctx->stall_info.all_stalled) {
     return;
   }
   for (uint16_t i = 0; i < SESSIONS_PER_THREAD; i++) {
-    uint16_t sess_i = (uint16_t)((p_ops->last_session + i) % SESSIONS_PER_THREAD);
-    if (od_pull_request_from_this_session(p_ops->stalled[sess_i], sess_i, ctx->t_id)) {
+    uint16_t sess_i = (uint16_t)((cp_ctx->trace_info.last_session + i) % SESSIONS_PER_THREAD);
+    if (od_pull_request_from_this_session(cp_ctx->stall_info.stalled[sess_i], sess_i, ctx->t_id)) {
       working_session = sess_i;
       break;
     }
@@ -52,25 +52,25 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 
   bool passed_over_all_sessions = false;
   while (op_i < MAX_OP_BATCH && !passed_over_all_sessions) {
-    fill_trace_op(ctx, p_ops, &ops[op_i], &trace[p_ops->trace_iter],
+    fill_trace_op(ctx, cp_ctx, &ops[op_i], &trace[cp_ctx->trace_info.trace_iter],
                   working_session, ctx->t_id);
 
     // Find out next session to work on
     passed_over_all_sessions =
         od_find_next_working_session(ctx, &working_session,
-                                     p_ops->stalled,
-                                     p_ops->last_session,
-                                     &p_ops->all_sessions_stalled);
+                                     cp_ctx->stall_info.stalled,
+                                     cp_ctx->trace_info.last_session,
+                                     &cp_ctx->stall_info.all_stalled);
     if (!ENABLE_CLIENTS) {
-      p_ops->trace_iter++;
-      if (trace[p_ops->trace_iter].opcode == NOP) p_ops->trace_iter = 0;
+      cp_ctx->trace_info.trace_iter++;
+      if (trace[cp_ctx->trace_info.trace_iter].opcode == NOP) cp_ctx->trace_info.trace_iter = 0;
     }
     op_i++;
   }
 
-  p_ops->last_session = (uint16_t) working_session;
+  cp_ctx->trace_info.last_session = (uint16_t) working_session;
   t_stats[ctx->t_id].cache_hits_per_thread += op_i;
-  cp_KVS_batch_op_trace(op_i, ops, p_ops, ctx->t_id);
+  cp_KVS_batch_op_trace(op_i, ops, cp_ctx, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
     insert_rmw(ctx, &ops[i], ctx->t_id);
   }
@@ -83,14 +83,14 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 // Worker inspects its local RMW entries
 static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   for (uint16_t sess_i = 0; sess_i < SESSIONS_PER_THREAD; sess_i++) {
-    loc_entry_t* loc_entry = &p_ops->prop_info->entry[sess_i];
+    loc_entry_t* loc_entry = &cp_ctx->prop_info->entry[sess_i];
     uint8_t state = loc_entry->state;
     if (state == INVALID_RMW) continue;
     if (ENABLE_ASSERTIONS) {
       assert(loc_entry->sess_id == sess_i);
-      assert(p_ops->stalled[sess_i]);
+      assert(cp_ctx->stall_info.stalled[sess_i]);
     }
 
     /* =============== ACCEPTED ======================== */
@@ -99,7 +99,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
       //printf("reps %u \n", loc_entry->rmw_reps.tot_replies);
       if (loc_entry->rmw_reps.ready_to_inspect) {
         loc_entry->rmw_reps.inspected = true;
-        inspect_accepts(p_ops, loc_entry, t_id);
+        inspect_accepts(cp_ctx, loc_entry, t_id);
         check_state_with_allowed_flags(7, (int) loc_entry->state, ACCEPTED, INVALID_RMW, RETRY_WITH_BIGGER_TS,
                                        NEEDS_KV_PTR, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
         if (ENABLE_ASSERTIONS && loc_entry->rmw_reps.ready_to_inspect)
@@ -109,7 +109,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 
     /* =============== PROPOSED ======================== */
     if (state == PROPOSED) {
-      //if (cannot_accept_if_unsatisfied_release(loc_entry, &p_ops->sess_info[sess_i])) {
+      //if (cannot_accept_if_unsatisfied_release(loc_entry, &cp_ctx->sess_info[sess_i])) {
       //  continue;
       //}
 
@@ -137,7 +137,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
       loc_entry_t *entry_to_commit =
         state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
       //bool is_commit_helping = loc_entry->helping_flag != NOT_HELPING;
-      if (p_ops->com_rob->capacity < COM_ROB_SIZE) {
+      if (cp_ctx->com_rob->capacity < COM_ROB_SIZE) {
         if (state == MUST_BCAST_COMMITS_FROM_HELP && loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED) {
           my_printf(green, "Wrkr %u sess %u will bcast commits for the latest committed RMW,"
                       " after learning its proposed RMW has already been committed \n",
@@ -151,7 +151,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 
     /* =============== RETRY ======================== */
     if (state == RETRY_WITH_BIGGER_TS) {
-      take_kv_ptr_with_higher_TS(p_ops, loc_entry, false, t_id);
+      take_kv_ptr_with_higher_TS(cp_ctx, loc_entry, false, t_id);
       check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
                                      NEEDS_KV_PTR, MUST_BCAST_COMMITS);
       if (loc_entry->state == PROPOSED) {
@@ -216,7 +216,7 @@ static inline void cp_send_ack_helper(context_t *ctx)
 //---------------------------------------------------------------------------*/
 static inline bool prop_recv_handler(context_t* ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_prop_mes_ud_t *incoming_props = (volatile cp_prop_mes_ud_t *) recv_fifo->fifo;
@@ -226,7 +226,7 @@ static inline bool prop_recv_handler(context_t* ctx)
 
   uint8_t coalesce_num = prop_mes->coalesce_num;
 
-  cp_ptrs_to_ops_t *ptrs_to_prop = p_ops->ptrs_to_ops;
+  cp_ptrs_to_ops_t *ptrs_to_prop = cp_ctx->ptrs_to_ops;
   if (qp_meta->polled_messages == 0) ptrs_to_prop->polled_ops = 0;
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
@@ -243,7 +243,7 @@ static inline bool prop_recv_handler(context_t* ctx)
 
 static inline bool acc_recv_handler(context_t* ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_acc_mes_ud_t *incoming_accs = (volatile cp_acc_mes_ud_t *) recv_fifo->fifo;
@@ -253,7 +253,7 @@ static inline bool acc_recv_handler(context_t* ctx)
 
   uint8_t coalesce_num = acc_mes->coalesce_num;
 
-  cp_ptrs_to_ops_t *ptrs_to_acc = p_ops->ptrs_to_ops;
+  cp_ptrs_to_ops_t *ptrs_to_acc = cp_ctx->ptrs_to_ops;
   if (qp_meta->polled_messages == 0) ptrs_to_acc->polled_ops = 0;
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
@@ -269,7 +269,7 @@ static inline bool acc_recv_handler(context_t* ctx)
 
 static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_rmw_rep_mes_ud_t *incoming_reps =
@@ -279,7 +279,7 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 
 
   bool is_accept = qp_id == ACC_QP_ID;
-  handle_rmw_rep_replies(p_ops, rep_mes, is_accept, ctx->t_id);
+  handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
 
   //if (ENABLE_STAT_COUNTING) {
   //  if (ENABLE_ASSERTIONS)
@@ -303,7 +303,7 @@ static inline bool cp_acc_rep_recv_handler(context_t* ctx)
 
 static inline bool cp_com_recv_handler(context_t* ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_com_mes_ud_t *incoming_coms = (volatile cp_com_mes_ud_t *) recv_fifo->fifo;
@@ -315,7 +315,7 @@ static inline bool cp_com_recv_handler(context_t* ctx)
   bool can_send_acks = ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  com_mes->l_id, com_mes->m_id);
   if (!can_send_acks) return false;
 
-  cp_ptrs_to_ops_t *ptrs_to_com = p_ops->ptrs_to_ops;
+  cp_ptrs_to_ops_t *ptrs_to_com = cp_ctx->ptrs_to_ops;
   if (qp_meta->polled_messages == 0) ptrs_to_com->polled_ops = 0;
 
   for (uint16_t i = 0; i < coalesce_num; i++) {
@@ -330,7 +330,7 @@ static inline bool cp_com_recv_handler(context_t* ctx)
 
 inline bool cp_ack_recv_handler(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACK_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile ctx_ack_mes_ud_t *incoming_acks = (volatile ctx_ack_mes_ud_t *) recv_fifo->fifo;
@@ -338,7 +338,7 @@ inline bool cp_ack_recv_handler(context_t *ctx)
 
   ctx_increase_credits_on_polling_ack(ctx, ACK_QP_ID, ack);
 
-  if (od_is_ack_too_old(ack, p_ops->com_rob, p_ops->applied_com_id))
+  if (od_is_ack_too_old(ack, cp_ctx->com_rob, cp_ctx->l_ids.applied_com_id))
     return true;
 
   cp_apply_acks(ctx, ack);
@@ -349,20 +349,20 @@ inline bool cp_ack_recv_handler(context_t *ctx)
 static inline void cp_bookkeep_commits(context_t *ctx)
 {
   uint16_t com_num = 0;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
-  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_pull_slot(p_ops->com_rob);
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_pull_slot(cp_ctx->com_rob);
 
   while (com_rob->state == READY_COMMIT) {
     com_rob->state = INVALID;
     my_printf(green, "Commit sess %u commit %lu\n",
-              com_rob->sess_id, p_ops->applied_com_id + com_num);
+              com_rob->sess_id, cp_ctx->l_ids.applied_com_id + com_num);
 
-    fifo_incr_pull_ptr(p_ops->com_rob);
-    fifo_decrem_capacity(p_ops->com_rob);
-    com_rob = (cp_com_rob_t *) get_fifo_pull_slot(p_ops->com_rob);
+    fifo_incr_pull_ptr(cp_ctx->com_rob);
+    fifo_decrem_capacity(cp_ctx->com_rob);
+    com_rob = (cp_com_rob_t *) get_fifo_pull_slot(cp_ctx->com_rob);
     com_num++;
   }
-  p_ops->applied_com_id += com_num;
+  cp_ctx->l_ids.applied_com_id += com_num;
 }
 
 
@@ -375,27 +375,27 @@ static inline void cp_bookkeep_commits(context_t *ctx)
 
 static inline void cp_checks_at_loop_start(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   //if (ENABLE_ASSERTIONS && CHECK_DBG_COUNTERS)
-  //  check_debug_cntrs(credit_debug_cnt, waiting_dbg_counter, p_ops,
+  //  check_debug_cntrs(credit_debug_cnt, waiting_dbg_counter, cp_ctx,
   //                    (void *) cb->dgram_buf, r_buf_pull_ptr,
   //                    w_buf_pull_ptr, ack_buf_pull_ptr, r_rep_buf_pull_ptr, t_id);
 
   if (PUT_A_MACHINE_TO_SLEEP && (machine_id == MACHINE_THAT_SLEEPS) &&
-      (t_stats[WORKERS_PER_MACHINE -1].cache_hits_per_thread > 4000000) && (!p_ops->debug_loop->slept)) {
+      (t_stats[WORKERS_PER_MACHINE -1].cache_hits_per_thread > 4000000) && (!cp_ctx->debug_loop->slept)) {
     uint seconds = 15;
     if (ctx->t_id == 0) my_printf(yellow, "Workers are going to sleep for %u secs\n", seconds);
-    sleep(seconds); p_ops->debug_loop->slept = true;
+    sleep(seconds); cp_ctx->debug_loop->slept = true;
     if (ctx->t_id == 0) my_printf(green, "Worker %u is back\n", ctx->t_id);
   }
   if (ENABLE_INFO_DUMP_ON_STALL && print_for_debug) {
-    //print_verbouse_debug_info(p_ops, t_id, credits);
+    //print_verbouse_debug_info(cp_ctx, t_id, credits);
   }
   if (ENABLE_ASSERTIONS) {
     if (ENABLE_ASSERTIONS && ctx->t_id == 0)  time_approx++;
-    p_ops->debug_loop->loop_counter++;
-    if (p_ops->debug_loop->loop_counter == M_16) {
-      //if (t_id == 0) print_all_stalled_sessions(p_ops, t_id);
+    cp_ctx->debug_loop->loop_counter++;
+    if (cp_ctx->debug_loop->loop_counter == M_16) {
+      //if (t_id == 0) print_all_stalled_sessions(cp_ctx, t_id);
 
       //printf("Wrkr %u is working rectified keys %lu \n",
       //       t_id, t_stats[t_id].rectified_keys);
@@ -408,7 +408,7 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
 //                 t_stats[t_id].cache_hits_per_thread, t_stats[t_id].failed_rem_writes,
 //                 t_stats[t_id].writes_sent, t_stats[t_id].writes_asked_by_clients);
 //        }
-      p_ops->debug_loop->loop_counter = 0;
+      cp_ctx->debug_loop->loop_counter = 0;
     }
   }
 }
@@ -416,7 +416,7 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
 
 _Noreturn static void cp_main_loop(context_t *ctx)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   while(true) {
 
     cp_checks_at_loop_start(ctx);

@@ -31,14 +31,15 @@ static inline void create_acc_rep(cp_acc_t *acc,
                                   mica_op_t *kv_ptr,
                                   uint16_t t_id);
 
-static inline void act_on_quorum_of_commit_acks(p_ops_t *p_ops,
+static inline void act_on_quorum_of_commit_acks(cp_ctx_t *cp_ctx,
+                                                loc_entry_t *loc_entry,
                                                 uint32_t ack_ptr,
                                                 uint16_t t_id);
 
 
 // Fill the trace_op to be passed to the KVS. Returns whether no more requests can be processed
 static inline bool fill_trace_op(context_t *ctx,
-                                 p_ops_t *p_ops, trace_op_t *op,
+                                 cp_ctx_t *cp_ctx, trace_op_t *op,
                                  trace_t *trace,
                                  int working_session,
                                  uint16_t t_id)
@@ -46,7 +47,7 @@ static inline bool fill_trace_op(context_t *ctx,
   create_inputs_of_op(&op->value_to_write, &op->value_to_read, &op->real_val_len,
                       &op->opcode, &op->index_to_req_array,
                       &op->key, op->value, trace, working_session, t_id);
-  if (!ENABLE_CLIENTS) check_trace_req(p_ops, trace, op, working_session, t_id);
+  if (!ENABLE_CLIENTS) check_trace_req(cp_ctx, trace, op, working_session, t_id);
 
 
   bool is_rmw = opcode_is_rmw(op->opcode);
@@ -60,12 +61,12 @@ static inline bool fill_trace_op(context_t *ctx,
     op->attempt_all_aboard = ctx->q_info->missing_num == 0;
   }
   increment_per_req_counters(op->opcode, t_id);
-  if (ENABLE_ASSERTIONS) assert(!p_ops->stalled[working_session]);
-  p_ops->stalled[working_session] = true;
+  if (ENABLE_ASSERTIONS) assert(!cp_ctx->stall_info.stalled[working_session]);
+  cp_ctx->stall_info.stalled[working_session] = true;
   op->session_id = (uint16_t) working_session;
 
   if (ENABLE_ASSERTIONS && DEBUG_SESSIONS)
-    p_ops->debug_loop->ses_dbg->dbg_cnt[working_session] = 0;
+    cp_ctx->debug_loop->ses_dbg->dbg_cnt[working_session] = 0;
   //if (w_pull_ptr[[working_session]] == 100000) my_printf(yellow, "Working ses %u \n", working_session);
   //my_printf(yellow, "BEFORE: OP_i %u -> session %u, opcode: %u \n", op_i, working_session, ops[op_i].opcode);
   //my_printf(yellow, "Wrkr %u, session %u, opcode %u \n", t_id, working_session, op->opcode);
@@ -135,7 +136,7 @@ static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
 
   cp_prop_t *prop = (cp_prop_t *) prop_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
@@ -147,8 +148,8 @@ static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
   prop_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
   // If it's the first message give it an lid
   if (slot_meta->coalesce_num == 1) {
-    prop_mes->l_id = p_ops->inserted_prop_id;
-    p_ops->inserted_prop_id++;
+    prop_mes->l_id = cp_ctx->l_ids.inserted_prop_id;
+    cp_ctx->l_ids.inserted_prop_id++;
   }
 }
 
@@ -173,10 +174,10 @@ static inline void cp_insert_rmw_rep_helper(context_t *ctx,
                                             uint32_t op_i,
                                             uint8_t qp_id)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  cp_ptrs_to_ops_t *ptrs_to_ops = p_ops->ptrs_to_ops;
+  cp_ptrs_to_ops_t *ptrs_to_ops = cp_ctx->ptrs_to_ops;
   bool is_accept = qp_id == ACC_QP_ID;
   void *op = ptrs_to_ops->ptr_to_ops[op_i];
   void *mes = ptrs_to_ops->ptr_to_mes[op_i];
@@ -217,7 +218,7 @@ static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
 
   cp_acc_t *acc = (cp_acc_t *) acc_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
@@ -228,25 +229,25 @@ static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
   acc_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
 
   if (slot_meta->coalesce_num == 1) {
-    acc_mes->l_id = p_ops->inserted_acc_id;
-    p_ops->inserted_acc_id++;
+    acc_mes->l_id = cp_ctx->l_ids.inserted_acc_id;
+    cp_ctx->l_ids.inserted_acc_id++;
   }
 }
 
-static inline void fill_com_rob_entry(p_ops_t *p_ops,
+static inline void fill_com_rob_entry(cp_ctx_t *cp_ctx,
                                       loc_entry_t *loc_entry)
 {
-  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_push_slot(p_ops->com_rob);
+  cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_push_slot(cp_ctx->com_rob);
   if (ENABLE_ASSERTIONS) {
     assert(com_rob->state == INVALID);
-    assert(p_ops->stalled[loc_entry->sess_id]);
+    assert(cp_ctx->stall_info.stalled[loc_entry->sess_id]);
   }
   com_rob->state = VALID;
   com_rob->sess_id = loc_entry->sess_id;
   com_rob->acks_seen = 0;
-  com_rob->l_id = p_ops->inserted_com_id;
-  fifo_incr_push_ptr(p_ops->com_rob);
-  fifo_increm_capacity(p_ops->com_rob);
+  com_rob->l_id = cp_ctx->l_ids.inserted_com_id;
+  fifo_incr_push_ptr(cp_ctx->com_rob);
+  fifo_increm_capacity(cp_ctx->com_rob);
 }
 
 static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
@@ -254,7 +255,7 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
 {
   per_qp_meta_t *qp_meta = &ctx->qp_meta[ACC_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   cp_com_t *com = (cp_com_t *) com_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
 
@@ -265,12 +266,12 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   com_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
 
   if (slot_meta->coalesce_num == 1) {
-    com_mes->l_id = p_ops->inserted_com_id;
-    fifo_set_push_backward_ptr(send_fifo, p_ops->com_rob->push_ptr); // for debug
+    com_mes->l_id = cp_ctx->l_ids.inserted_com_id;
+    fifo_set_push_backward_ptr(send_fifo, cp_ctx->com_rob->push_ptr); // for debug
   }
 
-  fill_com_rob_entry(p_ops, loc_entry);
-  p_ops->inserted_com_id++;
+  fill_com_rob_entry(cp_ctx, loc_entry);
+  cp_ctx->l_ids.inserted_com_id++;
 }
 
 
@@ -278,18 +279,18 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
 static inline void cp_apply_acks(context_t *ctx,
                                  ctx_ack_mes_t *ack)
 {
-  p_ops_t *p_ops = (p_ops_t *) ctx->appl_ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   uint32_t ack_num = ack->ack_num;
-  uint64_t pull_lid = p_ops->applied_com_id;
+  uint64_t pull_lid = cp_ctx->l_ids.applied_com_id;
   uint32_t ack_ptr =
-      ctx_find_when_the_ack_points_acked(ack, p_ops->com_rob, pull_lid, &ack_num);
+      ctx_find_when_the_ack_points_acked(ack, cp_ctx->com_rob, pull_lid, &ack_num);
 
   for (uint32_t ack_i = 0; ack_i < ack_num; ack_i++) {
-    cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_slot(p_ops->com_rob, ack_ptr);
+    cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_slot(cp_ctx->com_rob, ack_ptr);
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
-      act_on_quorum_of_commit_acks(&p_ops->prop_info[com_rob->sess_id], ack_ptr, ctx->t_id);
+      act_on_quorum_of_commit_acks(cp_ctx, &cp_ctx->prop_info[com_rob->sess_id], ack_ptr, ctx->t_id);
       com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);
