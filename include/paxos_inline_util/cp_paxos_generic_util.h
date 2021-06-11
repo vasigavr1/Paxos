@@ -226,6 +226,7 @@ static inline void fill_commit_info(commit_info_t *com_info, uint8_t flag,
                                     uint32_t log_no, ts_tuple_t base_ts,
                                     uint8_t *value, bool overwrite_kv)
 {
+  //if (ENABLE_ASSERTIONS) assert(log_no > 0);
   com_info->rmw_id.id = rmw_id;
   com_info->log_no = log_no;
   com_info->base_ts = base_ts;

@@ -806,7 +806,37 @@ static inline void check_the_proposed_log_no(mica_op_t *kv_ptr, loc_entry_t *loc
 }
 
 
+static inline void check_when_rmw_has_committed(mica_op_t *kv_ptr,
+                                                struct rmw_rep_last_committed *rep,
+                                                uint64_t glob_sess_id,
+                                                uint32_t log_no,
+                                                uint64_t rmw_id,
+                                                uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    //if (DEBUG_RMW)
+    my_printf(green, "Worker %u: Remote machine  global sess_id %u is trying a propose/accept, \n"
+                     "kv_ptr/ prop \n"
+                     "log_no: %u/%u \n"
+                     "rmw_id %lu/%lu \n It has been already committed, "
+                     "because for this global_sess, we have seen rmw_id %lu\n",
+              t_id, glob_sess_id,
+              kv_ptr->last_committed_log_no, log_no,
+              kv_ptr->last_committed_rmw_id.id, rmw_id,
+              committed_glob_sess_rmw_id[glob_sess_id]);
 
+    //for (uint64_t i = 0; i < GLOBAL_SESSION_NUM; i++)
+    //  printf("Glob sess num %lu: %lu \n", i, committed_glob_sess_rmw_id[i]);
+    assert(rep->opcode == RMW_ID_COMMITTED_SAME_LOG || RMW_ID_COMMITTED);
+    assert(kv_ptr->last_committed_log_no > 0);
+    if (rep->opcode == RMW_ID_COMMITTED_SAME_LOG) {
+      assert(kv_ptr->last_committed_log_no == log_no);
+      assert(kv_ptr->last_committed_rmw_id.id == rmw_id);
+      printf("assert was okay \n");
+    }
+  }
+
+}
 
 
 
@@ -1021,6 +1051,26 @@ static inline void checks_acting_on_already_accepted_rep(loc_entry_t *loc_entry,
 /*--------------------------------------------------------------------------
  * --------------------COMMITS-------------------------------------
  * --------------------------------------------------------------------------*/
+static inline void error_mesage_on_commit_check(mica_op_t *kv_ptr,
+                                           commit_info_t *com_info,
+                                           const char* message,
+                                           uint16_t t_id)
+{
+my_printf(red, "---Worker %u----- \n"
+               "%s \n"
+                "Flag: %s \n"
+                "kv_ptr / com_info \n"
+                "rmw_id  %lu/%lu\n, "
+                "log_no %u/%u \n"
+                "base ts %u-%u/%u-%u \n",
+                t_id, message,
+                com_info->message,
+                kv_ptr->last_committed_rmw_id.id, com_info->rmw_id.id,
+                kv_ptr->last_committed_log_no, com_info->log_no,
+                kv_ptr->ts.version, kv_ptr->ts.m_id,
+                com_info->base_ts.version, com_info->base_ts.m_id);
+}
+
 static inline void check_inputs_commit_algorithm(mica_op_t *kv_ptr,
                                                  commit_info_t *com_info,
                                                  uint16_t t_id)
@@ -1028,7 +1078,11 @@ static inline void check_inputs_commit_algorithm(mica_op_t *kv_ptr,
   if (ENABLE_ASSERTIONS) {
     assert(kv_ptr != NULL);
     if (com_info->value == NULL) assert(com_info->no_value);
-    if (com_info->log_no == 0) assert(com_info->rmw_id.id == 0);
+    if (com_info->log_no == 0) {
+      if (com_info->rmw_id.id != 0)
+        error_mesage_on_commit_check(kv_ptr, com_info, "Rmw-id is zero but not log-no", t_id);
+      assert(com_info->rmw_id.id == 0);
+    }
     if (com_info->rmw_id.id == 0) assert(com_info->log_no == 0);
     if (!com_info->overwrite_kv)
       assert(com_info->flag == FROM_LOCAL ||
@@ -1044,6 +1098,8 @@ static inline void check_on_overwriting_commit_algorithm(mica_op_t *kv_ptr,
   if (ENABLE_ASSERTIONS) {
     if (cart_comp == EQUAL) {
       assert(kv_ptr->last_committed_log_no == com_info->log_no);
+      if (kv_ptr->last_committed_rmw_id.id != com_info->rmw_id.id)
+        error_mesage_on_commit_check(kv_ptr, com_info, "Carts equal, but not rmw-ids", t_id);
       assert(kv_ptr->last_committed_rmw_id.id == com_info->rmw_id.id);
       //assert(memcmp(kv_ptr->value, com_info->value, (size_t) 8) == 0);
     }

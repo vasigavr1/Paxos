@@ -83,6 +83,13 @@ static inline bool fill_trace_op(context_t *ctx,
 /* ---------------------------------------------------------------------------
 //------------------------------ Inserting-utility----------------------------
 //---------------------------------------------------------------------------*/
+static inline void increment_prop_acc_credits(context_t *ctx,
+                                              cp_rmw_rep_mes_t *rep_mes,
+                                              bool is_accept)
+{
+  ctx->qp_meta[is_accept ? ACC_QP_ID : PROP_QP_ID].credits[rep_mes->m_id]++;
+}
+
 
 static inline void cp_fill_prop(cp_prop_t *prop,
                                 loc_entry_t *loc_entry,
@@ -262,8 +269,6 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   cp_com_t *com = (cp_com_t *) com_ptr;
   loc_entry_t *loc_entry = (loc_entry_t *) source;
 
-  printf("Inserting commit \n");
-
   fill_commit_message_from_l_entry(com, loc_entry, source_flag, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
@@ -292,7 +297,6 @@ static inline void cp_apply_acks(context_t *ctx,
 
   for (uint32_t ack_i = 0; ack_i < ack_num; ack_i++) {
     cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_slot(cp_ctx->com_rob, ack_ptr);
-    printf("ack_ptr %u \n", ack_ptr);
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {

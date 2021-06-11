@@ -14,18 +14,18 @@
  * --------------------------------------------------------------------------*/
 
 // Check the global RMW-id structure, to see if an RMW has already been committed
-static inline bool the_rmw_has_committed(uint64_t rmw_id,
-                                         bool same_log, uint16_t t_id,
+static inline bool the_rmw_has_committed(mica_op_t *kv_ptr,
+                                         uint64_t rmw_id,
+                                         uint32_t log_no, uint16_t t_id,
                                          struct rmw_rep_last_committed *rep)
 {
   uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
+
   if (ENABLE_ASSERTIONS) assert(glob_sess_id < GLOBAL_SESSION_NUM);
   if (committed_glob_sess_rmw_id[glob_sess_id] >= rmw_id) {
-    if (DEBUG_RMW)
-      my_printf(green, "Worker %u: A Remote machine  is trying a propose with global sess_id %u, "
-                  "rmw_id %lu, that has been already committed \n",
-                t_id, glob_sess_id, rmw_id);
+    bool same_log = kv_ptr->last_committed_log_no == log_no;
     rep->opcode = (uint8_t) (same_log ? RMW_ID_COMMITTED_SAME_LOG : RMW_ID_COMMITTED);
+    check_when_rmw_has_committed(kv_ptr, rep, glob_sess_id, log_no, rmw_id, t_id);
     return true;
   }
   else return false;
@@ -38,8 +38,8 @@ static inline bool is_log_smaller_or_has_rmw_committed(uint32_t log_no, mica_op_
                                                        struct rmw_rep_last_committed *rep)
 {
   check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
-  bool same_log = kv_ptr->last_committed_log_no == log_no;
-  if (the_rmw_has_committed(rmw_l_id, same_log, t_id, rep)) {
+
+  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep)) {
     return true;
   }
   else if (kv_ptr->last_committed_log_no >= log_no ||
@@ -1109,7 +1109,7 @@ static inline void act_on_receiving_already_accepted_rep_to_prop(context_t *ctx,
     loc_entry->helping_flag = HELPING;
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
     local_rmw_ack(loc_entry);
-    cp_acc_insert(ctx, loc_entry, true);
+    cp_acc_insert(ctx, loc_entry->help_loc_entry, true);
   }
 
 }

@@ -187,7 +187,6 @@ static inline void send_accs_helper(context_t *ctx)
 
 static inline void cp_send_coms_helper(context_t *ctx)
 {
-  printf("sending commit \n");
   send_com_checks(ctx);
 }
 
@@ -280,6 +279,9 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 
 
   bool is_accept = qp_id == ACC_REP_QP_ID;
+
+
+  increment_prop_acc_credits(ctx, rep_mes, is_accept);
   handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
 
   //if (ENABLE_STAT_COUNTING) {
@@ -292,14 +294,14 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 
 static inline bool cp_prop_rep_recv_handler(context_t* ctx)
 {
-  printf("Sending propose rep \n");
+  //printf("Sending propose rep \n");
   cp_rmw_rep_recv_handler(ctx, PROP_REP_QP_ID);
   return true;
 }
 
 static inline bool cp_acc_rep_recv_handler(context_t* ctx)
 {
-  printf("Sending accept rep \n");
+  //printf("Sending accept rep \n");
   cp_rmw_rep_recv_handler(ctx, ACC_REP_QP_ID);
   return true;
 }
@@ -313,7 +315,7 @@ static inline bool cp_com_recv_handler(context_t* ctx)
   cp_com_mes_t *com_mes = (cp_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com_mes;
 
   check_when_polling_for_coms(ctx, com_mes);
-  printf("received commit \n");
+  //printf("received commit \n");
 
   uint8_t coalesce_num = com_mes->coalesce_num;
   bool can_send_acks = ctx_ack_insert(ctx, ACK_QP_ID, coalesce_num,  com_mes->l_id, com_mes->m_id);
@@ -358,8 +360,9 @@ static inline void cp_bookkeep_commits(context_t *ctx)
 
   while (com_rob->state == READY_COMMIT) {
     com_rob->state = INVALID;
-    my_printf(green, "Commit sess %u commit %lu\n",
-              com_rob->sess_id, cp_ctx->l_ids.applied_com_id + com_num);
+    if (DEBUG_COMMITS)
+      my_printf(green, "Commit sess %u commit %lu\n",
+               com_rob->sess_id, cp_ctx->l_ids.applied_com_id + com_num);
 
     fifo_incr_pull_ptr(cp_ctx->com_rob);
     fifo_decrem_capacity(cp_ctx->com_rob);
