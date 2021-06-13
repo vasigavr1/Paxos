@@ -437,6 +437,7 @@ static inline void bookkeeping_after_gathering_accept_acks(loc_entry_t *loc_entr
 static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entry_t *loc_entry,
                                                     uint8_t broadcast_state, uint16_t t_id)
 {
+  check_loc_entry_when_filling_com(loc_entry, broadcast_state, t_id);
 
   memcpy(&com->key, &loc_entry->key, KEY_SIZE);
   com->t_rmw_id = loc_entry->rmw_id.id;

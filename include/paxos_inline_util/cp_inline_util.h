@@ -143,7 +143,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
                       " after learning its proposed RMW has already been committed \n",
                     t_id, loc_entry->sess_id);
         }
-        cp_com_insert(ctx, loc_entry, state);
+        cp_com_insert(ctx, entry_to_commit, state);
         loc_entry->state = COMMITTED;
         continue;
       }

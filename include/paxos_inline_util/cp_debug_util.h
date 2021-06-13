@@ -355,9 +355,6 @@ static inline void print_log_on_rmw_recv(uint64_t rmw_l_id,
             acc_m_id, rmw_l_id,
             (uint32_t) rmw_l_id % GLOBAL_SESSION_NUM,
             ts.version, ts.m_id, acc_rep->opcode);
-
-
-
 }
 
 
@@ -814,16 +811,17 @@ static inline void check_when_rmw_has_committed(mica_op_t *kv_ptr,
                                                 uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-    //if (DEBUG_RMW)
-    my_printf(green, "Worker %u: Remote machine  global sess_id %u is trying a propose/accept, \n"
-                     "kv_ptr/ prop \n"
-                     "log_no: %u/%u \n"
-                     "rmw_id %lu/%lu \n It has been already committed, "
-                     "because for this global_sess, we have seen rmw_id %lu\n",
-              t_id, glob_sess_id,
-              kv_ptr->last_committed_log_no, log_no,
-              kv_ptr->last_committed_rmw_id.id, rmw_id,
-              committed_glob_sess_rmw_id[glob_sess_id]);
+    if (DEBUG_RMW)
+      my_printf(green, "Key %lu: Worker %u: Remote machine  global sess_id %u is trying a propose/accept, \n"
+                       "kv_ptr/ prop \n"
+                       "log_no: %u/%u \n"
+                       "rmw_id %lu/%lu \n It has been already committed, "
+                       "because for this global_sess, we have seen rmw_id %lu\n",
+                kv_ptr->key.bkt,
+                t_id, glob_sess_id,
+                kv_ptr->last_committed_log_no, log_no,
+                kv_ptr->last_committed_rmw_id.id, rmw_id,
+                committed_glob_sess_rmw_id[glob_sess_id]);
 
     //for (uint64_t i = 0; i < GLOBAL_SESSION_NUM; i++)
     //  printf("Glob sess num %lu: %lu \n", i, committed_glob_sess_rmw_id[i]);
@@ -838,6 +836,18 @@ static inline void check_when_rmw_has_committed(mica_op_t *kv_ptr,
 
 }
 
+static inline void check_loc_entry_when_filling_com(loc_entry_t *loc_entry,
+                                                    uint8_t broadcast_state,
+                                                    uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (broadcast_state == MUST_BCAST_COMMITS_FROM_HELP) {
+      //my_printf(green, "Wrkr %u helping rmw %lu glob_sess_id %u for key %lu \n",
+       //                 t_id, loc_entry->rmw_id.id, loc_entry->key.bkt);
+      assert(loc_entry->help_loc_entry == NULL);
+    }
+  }
+}
 
 
 
@@ -1056,19 +1066,20 @@ static inline void error_mesage_on_commit_check(mica_op_t *kv_ptr,
                                            const char* message,
                                            uint16_t t_id)
 {
-my_printf(red, "---Worker %u----- \n"
-               "%s \n"
-                "Flag: %s \n"
-                "kv_ptr / com_info \n"
-                "rmw_id  %lu/%lu\n, "
-                "log_no %u/%u \n"
-                "base ts %u-%u/%u-%u \n",
-                t_id, message,
-                com_info->message,
-                kv_ptr->last_committed_rmw_id.id, com_info->rmw_id.id,
-                kv_ptr->last_committed_log_no, com_info->log_no,
-                kv_ptr->ts.version, kv_ptr->ts.m_id,
-                com_info->base_ts.version, com_info->base_ts.m_id);
+  my_printf(red, "----Key: %lu ---------Worker %u----- \n"
+                 "%s \n"
+                  "Flag: %s \n"
+                  "kv_ptr / com_info \n"
+                  "rmw_id  %lu/%lu\n, "
+                  "log_no %u/%u \n"
+                  "base ts %u-%u/%u-%u \n",
+                  kv_ptr->key.bkt, t_id, message,
+                  com_info->message,
+                  kv_ptr->last_committed_rmw_id.id, com_info->rmw_id.id,
+                  kv_ptr->last_committed_log_no, com_info->log_no,
+                  kv_ptr->ts.version, kv_ptr->ts.m_id,
+                  com_info->base_ts.version, com_info->base_ts.m_id);
+  exit(0);
 }
 
 static inline void check_inputs_commit_algorithm(mica_op_t *kv_ptr,

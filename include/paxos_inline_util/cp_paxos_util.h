@@ -464,7 +464,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
   check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
   unlock_seqlock(&kv_ptr->seqlock);
   print_log_on_rmw_recv(rmw_l_id, acc_m_id, log_no, acc_rep,
-                        acc->ts, kv_ptr, number_of_reqs, false, t_id);
+                        acc->ts, kv_ptr, number_of_reqs, true, t_id);
 }
 
 /*--------------------------------------------------------------------------
