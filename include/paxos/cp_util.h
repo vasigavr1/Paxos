@@ -20,16 +20,16 @@ void cp_init_globals();
 ------------------------------STATS --------------------------------------
 ---------------------------------------------------------------------------*/
 struct stats {
-  double r_batch_size[WORKERS_PER_MACHINE];
-  double r_rep_batch_size[WORKERS_PER_MACHINE];
+  double prop_batch_size[WORKERS_PER_MACHINE];
+  double prop_rep_batch_size[WORKERS_PER_MACHINE];
   double ack_batch_size[WORKERS_PER_MACHINE];
-  double write_batch_size[WORKERS_PER_MACHINE];
+  double acc_batch_size[WORKERS_PER_MACHINE];
   double stalled_ack[WORKERS_PER_MACHINE];
   double stalled_r_rep[WORKERS_PER_MACHINE];
 	double failed_rem_write[WORKERS_PER_MACHINE];
   double quorum_reads_per_thread[WORKERS_PER_MACHINE];
 
-	double cache_hits_per_thread[WORKERS_PER_MACHINE];
+	double total_reqs[WORKERS_PER_MACHINE];
 
 	double writes_sent[WORKERS_PER_MACHINE];
 	double reads_sent[WORKERS_PER_MACHINE];
@@ -39,15 +39,13 @@ struct stats {
 	double accepts_sent[WORKERS_PER_MACHINE];
 	double commits_sent[WORKERS_PER_MACHINE];
 
-	double r_reps_sent[WORKERS_PER_MACHINE];
-	double received_writes[WORKERS_PER_MACHINE];
-	double received_reads[WORKERS_PER_MACHINE];
+	double prop_reps_sent[WORKERS_PER_MACHINE];
+	double received_accs[WORKERS_PER_MACHINE];
+	double received_props[WORKERS_PER_MACHINE];
 	double received_acks[WORKERS_PER_MACHINE];
-	double received_r_reps[WORKERS_PER_MACHINE];
+	double received_prop_reps[WORKERS_PER_MACHINE];
   double cancelled_rmws[WORKERS_PER_MACHINE];
 	double all_aboard_rmws[WORKERS_PER_MACHINE];
-	double reads_that_become_writes[WORKERS_PER_MACHINE];
-  //double zookeeper_writes[WORKERS_PER_MACHINE];
 };
 void dump_stats_2_file(struct stats* st);
 void print_latency_stats(void);

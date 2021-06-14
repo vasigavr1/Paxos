@@ -184,31 +184,13 @@ typedef struct commit_info {
   const char* message;
 } commit_info_t;
 
+
+
 typedef struct thread_stats {
-  long long cache_hits_per_thread;
-
-  long long acks_sent;
-  long long acks_sent_mes_num;
-  long long received_acks_mes_num;
-  uint64_t per_worker_acks_sent[MACHINE_NUM];
-  uint64_t per_worker_acks_mes_sent[MACHINE_NUM];
-  uint64_t per_worker_acks_received[MACHINE_NUM];
-  uint64_t per_worker_acks_mes_received[MACHINE_NUM];
-  uint64_t per_worker_props_received[MACHINE_NUM];
-
-  uint64_t received_props;
-  uint64_t received_props_mes_num;
-
-  uint64_t proposes_sent; // number of broadcast
-  uint64_t accepts_sent; // number of broadcast
-  uint64_t commits_sent;
-  uint64_t rmws_completed;
+  uint64_t total_reqs;
+  od_qp_stats_t qp_stats[QP_NUM];
   uint64_t cancelled_rmws;
   uint64_t all_aboard_rmws; // completed ones
-
-  uint64_t stalled_ack;
-
-  //long long unused[3]; // padding to avoid false sharing
 } t_stats_t;
 
 

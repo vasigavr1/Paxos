@@ -1191,22 +1191,8 @@ static inline void clean_up_after_inspecting_props(cp_ctx_t *cp_ctx,
                                                    uint16_t t_id)
 {
 
-  /* ------------------CHECK STATE---------------------------*/
-  check_state_with_allowed_flags(7, (int) loc_entry->state,
-                                 INVALID_RMW,          // Already-committed, no need to send commits
-                                 RETRY_WITH_BIGGER_TS, // Log-too-high
-                                 ACCEPTED,             // Acks or prop_locally_accepted or helping
-                                 NEEDS_KV_PTR,         // log-too-small, failed to accept or failed to help because kv_ptr is taken
-                                 MUST_BCAST_COMMITS,   //  already-committed, accept attempt found it's already committd
-                                 MUST_BCAST_COMMITS_FROM_HELP // log-too-hig timeout
-  );
-  check_state_with_allowed_flags(7, (int) loc_entry->helping_flag,
-                                 NOT_HELPING,
-                                 HELPING,
-                                 PROPOSE_NOT_LOCALLY_ACKED,
-                                 PROPOSE_LOCALLY_ACCEPTED,
-                                 HELP_PREV_COMMITTED_LOG_TOO_HIGH,
-                                 HELPING_MYSELF);
+  checks_before_resetting_prop(loc_entry);
+
 
   if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
       loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
@@ -1220,44 +1206,23 @@ static inline void clean_up_after_inspecting_props(cp_ctx_t *cp_ctx,
 
   if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
 
-  if (ENABLE_CAS_CANCELLING) {
-    loc_entry->killable = (loc_entry->state == RETRY_WITH_BIGGER_TS ||
-                           loc_entry->state == NEEDS_KV_PTR) &&
-                          loc_entry->accepted_log_no == 0 &&
-                          loc_entry->opcode == COMPARE_AND_SWAP_WEAK;
+  set_kilalble_flag(loc_entry);
 
-  }
+  check_after_inspecting_prop(loc_entry);
+
+
 }
 
 
 
-static inline void clean_up_after_inspecting_accept(cp_ctx_t *cp_ctx,
-                                                    loc_entry_t *loc_entry,
+static inline void clean_up_after_inspecting_accept(loc_entry_t *loc_entry,
                                                     uint16_t t_id)
 {
-  /* ------------------CHECK STATE---------------------------*/
-  check_state_with_allowed_flags(6, (int) loc_entry->state,
-                                 INVALID_RMW,          // already committed -- no broadcasts
-                                 RETRY_WITH_BIGGER_TS, //log-too-high
-                                 NEEDS_KV_PTR,         // log-too-small
-                                 MUST_BCAST_COMMITS_FROM_HELP, // ack-quorum for help
-                                 MUST_BCAST_COMMITS            // ack-quorum or already committed
-  );
-
-  check_state_with_allowed_flags(4, (int) loc_entry->helping_flag,
-                                 NOT_HELPING,
-                                 HELPING);
-
-  /* -------------------RESET---------------------------*/
+  checks_before_resetting_accept(loc_entry);
   advance_loc_entry_l_id(loc_entry, t_id);
   zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-  // All-aboard
-  if (ENABLE_ALL_ABOARD && loc_entry->all_aboard) {
-    if (ENABLE_STAT_COUNTING) {
-      t_stats[t_id].all_aboard_rmws++;
-    }
-    loc_entry->all_aboard = false;
-  }
+  reset_all_aboard_accept(loc_entry, t_id);
+  check_after_inspecting_accept(loc_entry);
 }
 
 
@@ -1395,6 +1360,10 @@ static inline void inspect_proposes(context_t *ctx,
                                     loc_entry_t *loc_entry,
                                     uint16_t t_id)
 {
+  if (not_ready_to_inspect_propose(loc_entry)) return;
+  loc_entry->stalled_reason = NO_REASON;
+  loc_entry->rmw_reps.inspected = true;
+  advance_loc_entry_l_id(loc_entry, t_id);
   cp_ctx_t *cp_ctx = (cp_ctx_t*) ctx->appl_ctx;
   bool zero_out_log_too_high_cntr = true;
   struct rmw_rep_info *rep_info = &loc_entry->rmw_reps;
@@ -1458,6 +1427,9 @@ static inline void inspect_accepts(cp_ctx_t *cp_ctx,
                                    loc_entry_t *loc_entry,
                                    uint16_t t_id)
 {
+  check_sum_of_reps(loc_entry);
+  if (!loc_entry->rmw_reps.ready_to_inspect) return;
+  loc_entry->rmw_reps.inspected = true;
   struct rmw_rep_info *rep_info = &loc_entry->rmw_reps;
   uint8_t remote_quorum = (uint8_t) (loc_entry->all_aboard ?
                                      MACHINE_NUM : QUORUM_NUM);
@@ -1518,10 +1490,27 @@ static inline void inspect_accepts(cp_ctx_t *cp_ctx,
   else if (ENABLE_ASSERTIONS) assert(false);
 
 
-  clean_up_after_inspecting_accept(cp_ctx, loc_entry, t_id);
+  clean_up_after_inspecting_accept(loc_entry, t_id);
 
 }
 
+
+
+static inline bool inspect_commits(context_t *ctx,
+                                   loc_entry_t* loc_entry,
+                                   uint32_t commit_capacity)
+{
+
+  loc_entry_t *entry_to_commit =
+      loc_entry->state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
+  if (commit_capacity < COM_ROB_SIZE) {
+    print_commit_latest_committed(loc_entry, ctx->t_id);
+    cp_com_insert(ctx, entry_to_commit, loc_entry->state);
+    loc_entry->state = COMMITTED;
+    return true;
+  }
+  return false;
+}
 
 
 /*--------------------------------------------------------------------------

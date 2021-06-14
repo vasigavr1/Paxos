@@ -140,13 +140,7 @@ static inline uint8_t sum_of_reps(struct rmw_rep_info* rmw_reps)
 }
 
 
-// Increment the per-request counters
-static inline void increment_per_req_counters(uint8_t opcode, uint16_t t_id)
-{
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[t_id].rmws_completed++;
-  }
-}
+
 
 
 /* ---------------------------------------------------------------------------

@@ -2,82 +2,75 @@
 
 void print_latency_stats(void);
 
-void cp_stats(stats_ctx_t *ctx)
-{
 
-  double seconds = ctx-> seconds;
-  uint16_t print_count = ctx->print_count;
+static inline void get_all_wrkr_stats(stats_ctx_t *ctx)
+{
   t_stats_t *curr_w_stats = ctx->curr_w_stats;
   t_stats_t *prev_w_stats = ctx->prev_w_stats;
-  c_stats_t *curr_c_stats = ctx->curr_c_stats;
-  c_stats_t *prev_c_stats = ctx->prev_c_stats;
-  all_stats_t all_stats;
-
-  double total_throughput = 0;
-  uint64_t all_clients_cache_hits = 0,
-    all_wrkr_completed_reqs = 0,
-    all_wrkr_completed_zk_writes = 0,
-    all_wrkr_sync_percentage = 0;
-
-  seconds *= MILLION;//1000; // compute only MIOPS
-  uint64_t total_cancelled_rmws =  0, total_rmws = 0, total_all_aboard_rmws = 0;
+  t_stats_t *all_per_t = ctx->all_per_t;
   for (int i = 0; i < WORKERS_PER_MACHINE; i++) {
-
-    all_wrkr_completed_reqs += curr_w_stats[i].cache_hits_per_thread - prev_w_stats[i].cache_hits_per_thread;
-    total_cancelled_rmws += curr_w_stats[i].cancelled_rmws - prev_w_stats[i].cancelled_rmws;
-    total_rmws += curr_w_stats[i].rmws_completed - prev_w_stats[i].rmws_completed;
-    total_all_aboard_rmws += curr_w_stats[i].all_aboard_rmws - prev_w_stats[i].all_aboard_rmws;
-
-    all_stats.cache_hits_per_thread[i] =
-      (curr_w_stats[i].cache_hits_per_thread - prev_w_stats[i].cache_hits_per_thread) / seconds;
-
-
-
-    all_stats.rmws_completed[i] = (curr_w_stats[i].rmws_completed - prev_w_stats[i].rmws_completed) / (seconds);
-    all_stats.all_aboard_rmws[i] = (curr_w_stats[i].all_aboard_rmws - prev_w_stats[i].all_aboard_rmws) / (seconds);
-    all_stats.proposes_sent[i] = (curr_w_stats[i].proposes_sent - prev_w_stats[i].proposes_sent) / (seconds);
-    all_stats.accepts_sent[i] = (curr_w_stats[i].accepts_sent - prev_w_stats[i].accepts_sent) / (seconds);
-    all_stats.commits_sent[i] = (curr_w_stats[i].commits_sent - prev_w_stats[i].commits_sent) / (seconds);
-
-    //all_stats.quorum_reads_per_thread[i] = (curr_w_stats[i].quorum_reads - prev_w_stats[i].quorum_reads) / (seconds);
-    all_stats.acks_sent[i] = (curr_w_stats[i].acks_sent - prev_w_stats[i].acks_sent) / seconds;
-
-    all_stats.ack_batch_size[i] = (curr_w_stats[i].acks_sent - prev_w_stats[i].acks_sent) /
-                                  (double) (curr_w_stats[i].acks_sent_mes_num -
-                                            prev_w_stats[i].acks_sent_mes_num);
+    stats_per_thread((uint64_t *) &curr_w_stats[i],
+                     (uint64_t *) &prev_w_stats[i],
+                     (uint64_t *) ctx->all_aggreg,
+                     (uint64_t *) &all_per_t[i],
+                     sizeof(t_stats_t));
   }
-
   memcpy(prev_w_stats, curr_w_stats, WORKERS_PER_MACHINE * (sizeof(struct thread_stats)));
-  memcpy(prev_c_stats, curr_c_stats, CLIENTS_PER_MACHINE * (sizeof(struct client_stats)));
-  total_throughput = (all_wrkr_completed_reqs) / seconds;
-  double per_s_all_aboard_rmws = (total_all_aboard_rmws) / seconds;
+}
 
-  if (SHOW_STATS_LATENCY_STYLE)
-    my_printf(green, "%u %.2f, canc: %.2f, all-aboard: %.2f \n",
-              print_count, total_throughput,
-              (total_cancelled_rmws / (double) total_rmws),
-              per_s_all_aboard_rmws
-              );
-  else {
-    printf("---------------PRINT %d time elapsed %.2f---------------\n", print_count, seconds / MILLION);
-    my_printf(green, "SYSTEM MIOPS: %.2f \n", total_throughput);
+static inline void show_aggregate_stats(stats_ctx_t *ctx)
+{
+  t_stats_t *all_aggreg = ctx->all_aggreg;
+  my_printf(green, "%u %.2f, canc: %.2f, all-aboard: %.2f \n",
+            ctx->print_count,
+            per_sec(ctx, all_aggreg->total_reqs),
+            (double) all_aggreg->cancelled_rmws / (double) all_aggreg->total_reqs,
+            per_sec(ctx, all_aggreg->all_aboard_rmws));
+}
 
-    for (int i = 0; i < WORKERS_PER_MACHINE; i++) {
-      my_printf(cyan, "T%d: ", i);
-      my_printf(yellow, "%.2f MIOPS,"
-                  "RMWS: %.2f/s, P/S %.2f/s, A/S %.2f/s, C/S %.2f/s ",
-                all_stats.rmws_completed[i],
-                all_stats.proposes_sent[i],
-                all_stats.accepts_sent[i],
-                all_stats.commits_sent[i]);
-      my_printf(yellow, ", BATCHES: Acks %.2f",
-                all_stats.ack_batch_size[i]);
-      printf("\n");
-    }
+static inline void show_per_thread_stats(stats_ctx_t *ctx)
+{
+  t_stats_t *all_per_t = ctx->all_per_t;
+  uint64_t total_reqs = ctx->all_aggreg->total_reqs;
+  printf("---------------PRINT %d time elapsed %.2f---------------\n",
+         ctx->print_count, ctx->seconds);
+  my_printf(green, "SYSTEM MIOPS: %.2f \n",
+            per_sec(ctx, total_reqs));
+
+  for (int i = 0; i < WORKERS_PER_MACHINE; i++) {
+    my_printf(cyan, "T%d: ", i);
+    my_printf(yellow, "%.2f MIOPS, Ab %.2f/s, "
+                      "P/S %.2f/s, A/S %.2f/s, C/S %.2f/s",
+              per_sec(ctx, all_per_t[i].total_reqs),
+              per_sec(ctx, all_per_t[i].all_aboard_rmws),
+              per_sec(ctx, all_per_t[i].qp_stats[PROP_QP_ID].sent),
+              per_sec(ctx, all_per_t[i].qp_stats[ACC_QP_ID].sent),
+              per_sec(ctx, all_per_t[i].qp_stats[COM_QP_ID].sent));
+    my_printf(yellow, ", BATCHES: "
+                      "Acks %.2f, Props %.2f, Accs %.2f, Coms %.2f",
+              get_batch(ctx, &all_per_t[i].qp_stats[ACK_QP_ID]),
+              get_batch(ctx, &all_per_t[i].qp_stats[PROP_QP_ID]),
+              get_batch(ctx, &all_per_t[i].qp_stats[ACC_QP_ID]),
+              get_batch(ctx, &all_per_t[i].qp_stats[COM_QP_ID]));
     printf("\n");
-    printf("---------------------------------------\n");
-    my_printf(green, "SYSTEM MIOPS: %.2f \n", total_throughput);
   }
+  printf("\n");
+  printf("---------------------------------------\n");
+  my_printf(green, "SYSTEM MIOPS: %.2f \n",
+            per_sec(ctx, total_reqs));
+}
+
+
+void cp_stats(stats_ctx_t *ctx)
+{
+  get_all_wrkr_stats(ctx);
+
+  if (SHOW_AGGREGATE_STATS)
+    show_aggregate_stats(ctx);
+  else {
+    show_per_thread_stats(ctx);
+  }
+  memset(ctx->all_aggreg, 0, sizeof(t_stats_t));
 
 }
 

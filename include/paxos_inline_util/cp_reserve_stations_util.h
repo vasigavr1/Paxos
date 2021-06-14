@@ -60,7 +60,6 @@ static inline bool fill_trace_op(context_t *ctx,
   if (is_rmw && ENABLE_ALL_ABOARD) {
     op->attempt_all_aboard = ctx->q_info->missing_num == 0;
   }
-  increment_per_req_counters(op->opcode, t_id);
   if (ENABLE_ASSERTIONS) assert(!cp_ctx->stall_info.stalled[working_session]);
   cp_ctx->stall_info.stalled[working_session] = true;
   op->session_id = (uint16_t) working_session;

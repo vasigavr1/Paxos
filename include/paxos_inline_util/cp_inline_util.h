@@ -69,7 +69,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   }
 
   cp_ctx->trace_info.last_session = (uint16_t) working_session;
-  t_stats[ctx->t_id].cache_hits_per_thread += op_i;
+  t_stats[ctx->t_id].total_reqs += op_i;
   cp_KVS_batch_op_trace(op_i, ops, cp_ctx, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
     insert_rmw(ctx, &ops[i], ctx->t_id);
@@ -80,6 +80,21 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 //------------------------------ RMW FSM ----------------------------------
 //---------------------------------------------------------------------------*/
 
+//static inline void handle_accept_state(context_t *ctx,
+//                                       loc_entry_t* loc_entry)
+//{
+//  check_sum_of_reps(loc_entry);
+//  //printf("reps %u \n", loc_entry->rmw_reps.tot_replies);
+//  if (loc_entry->rmw_reps.ready_to_inspect) {
+//    loc_entry->rmw_reps.inspected = true;
+//    inspect_accepts(ctx->appl_ctx, loc_entry, ctx->t_id);
+//    check_state_with_allowed_flags(7, (int) loc_entry->state, ACCEPTED, INVALID_RMW, RETRY_WITH_BIGGER_TS,
+//                                   NEEDS_KV_PTR, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
+//    if (ENABLE_ASSERTIONS && loc_entry->rmw_reps.ready_to_inspect)
+//      assert(loc_entry->state == ACCEPTED && loc_entry->all_aboard);
+//  }
+//}
+
 // Worker inspects its local RMW entries
 static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 {
@@ -88,69 +103,20 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
     loc_entry_t* loc_entry = &cp_ctx->prop_info->entry[sess_i];
     uint8_t state = loc_entry->state;
     if (state == INVALID_RMW) continue;
-    if (ENABLE_ASSERTIONS) {
-      assert(loc_entry->sess_id == sess_i);
-      assert(cp_ctx->stall_info.stalled[sess_i]);
-    }
+    check_when_inspecting_rmw(loc_entry, &cp_ctx->stall_info, sess_i);
 
-    /* =============== ACCEPTED ======================== */
-    if (state == ACCEPTED) {
-      check_sum_of_reps(loc_entry);
-      //printf("reps %u \n", loc_entry->rmw_reps.tot_replies);
-      if (loc_entry->rmw_reps.ready_to_inspect) {
-        loc_entry->rmw_reps.inspected = true;
-        inspect_accepts(cp_ctx, loc_entry, t_id);
-        check_state_with_allowed_flags(7, (int) loc_entry->state, ACCEPTED, INVALID_RMW, RETRY_WITH_BIGGER_TS,
-                                       NEEDS_KV_PTR, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
-        if (ENABLE_ASSERTIONS && loc_entry->rmw_reps.ready_to_inspect)
-            assert(loc_entry->state == ACCEPTED && loc_entry->all_aboard);
-      }
-    }
+    if (state == ACCEPTED)
+       inspect_accepts(cp_ctx, loc_entry, t_id);
+    if (state == PROPOSED)
+      inspect_proposes(ctx, loc_entry, t_id);
 
-    /* =============== PROPOSED ======================== */
-    if (state == PROPOSED) {
-      //if (cannot_accept_if_unsatisfied_release(loc_entry, &cp_ctx->sess_info[sess_i])) {
-      //  continue;
-      //}
-
-      if (loc_entry->rmw_reps.ready_to_inspect) {
-        loc_entry->stalled_reason = NO_REASON;
-        // further responses for that broadcast of Propose must be disregarded;
-        // in addition we do this before inspecting, so that if we broadcast accepts, they have a fresh l_id
-        loc_entry->rmw_reps.inspected = true;
-        advance_loc_entry_l_id(loc_entry, t_id);
-        inspect_proposes(ctx, loc_entry, t_id);
-        check_state_with_allowed_flags(7, (int) loc_entry->state, INVALID_RMW, RETRY_WITH_BIGGER_TS,
-                                       NEEDS_KV_PTR, ACCEPTED, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
-        if (ENABLE_ASSERTIONS) assert(!loc_entry->rmw_reps.ready_to_inspect);
-        if (loc_entry->state != ACCEPTED) assert(loc_entry->rmw_reps.tot_replies == 0);
-        else assert(loc_entry->rmw_reps.tot_replies == 1);
-      }
-      else {
-        assert(loc_entry->rmw_reps.tot_replies < QUORUM_NUM);
-        loc_entry->stalled_reason = STALLED_BECAUSE_NOT_ENOUGH_REPS;
-      }
-    }
-
-    /* =============== BROADCAST COMMITS ======================== */
-    if (state == MUST_BCAST_COMMITS || state == MUST_BCAST_COMMITS_FROM_HELP) {
-      loc_entry_t *entry_to_commit =
-        state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
-      //bool is_commit_helping = loc_entry->helping_flag != NOT_HELPING;
-      if (cp_ctx->com_rob->capacity < COM_ROB_SIZE) {
-        if (state == MUST_BCAST_COMMITS_FROM_HELP && loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED) {
-          my_printf(green, "Wrkr %u sess %u will bcast commits for the latest committed RMW,"
-                      " after learning its proposed RMW has already been committed \n",
-                    t_id, loc_entry->sess_id);
-        }
-        cp_com_insert(ctx, entry_to_commit, state);
-        loc_entry->state = COMMITTED;
+    if (loc_entry->state == MUST_BCAST_COMMITS || loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP) {
+      if (inspect_commits(ctx, loc_entry, cp_ctx->com_rob->capacity))
         continue;
-      }
     }
 
     /* =============== RETRY ======================== */
-    if (state == RETRY_WITH_BIGGER_TS) {
+    if (loc_entry->state == RETRY_WITH_BIGGER_TS) {
       take_kv_ptr_with_higher_TS(cp_ctx, loc_entry, false, t_id);
       check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
                                      NEEDS_KV_PTR, MUST_BCAST_COMMITS);
@@ -209,6 +175,15 @@ static inline void cp_acc_rep_helper(context_t *ctx)
 static inline void cp_send_ack_helper(context_t *ctx)
 {
   //ctx_refill_recvs(ctx, COM_QP_ID);
+}
+
+static inline void cp_send_ack_debug(context_t *ctx,
+                                     void* ack_ptr,
+                                     uint32_t m_i)
+{
+  checks_stats_prints_when_sending_acks(ctx,
+                                        (ctx_ack_mes_t *) ack_ptr,
+                                        (uint8_t) m_i);
 }
 
 /* ---------------------------------------------------------------------------
@@ -283,13 +258,6 @@ static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
 
   increment_prop_acc_credits(ctx, rep_mes, is_accept);
   handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
-
-  //if (ENABLE_STAT_COUNTING) {
-  //  if (ENABLE_ASSERTIONS)
-  //    t_stats[ctx->t_id].per_worker_r_reps_received[prop_rep_mes->m_id] += prop_rep_mes->coalesce_num;
-  //  t_stats[ctx->t_id].received_r_reps += prop_rep_mes->coalesce_num;
-  //  t_stats[ctx->t_id].received_r_reps_mes_num++;
-  //}
 }
 
 static inline bool cp_prop_rep_recv_handler(context_t* ctx)
@@ -389,7 +357,7 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
   //                    w_buf_pull_ptr, ack_buf_pull_ptr, r_rep_buf_pull_ptr, t_id);
 
   if (PUT_A_MACHINE_TO_SLEEP && (machine_id == MACHINE_THAT_SLEEPS) &&
-      (t_stats[WORKERS_PER_MACHINE -1].cache_hits_per_thread > 4000000) && (!cp_ctx->debug_loop->slept)) {
+      (t_stats[WORKERS_PER_MACHINE -1].total_reqs > 4000000) && (!cp_ctx->debug_loop->slept)) {
     uint seconds = 15;
     if (ctx->t_id == 0) my_printf(yellow, "Workers are going to sleep for %u secs\n", seconds);
     sleep(seconds); cp_ctx->debug_loop->slept = true;
@@ -412,7 +380,7 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
 //                   "epoch_id %u, reqs %lld failed writes %lu, writes done %lu/%lu \n", t_id,
 //                 conf_bit_vec[MACHINE_THAT_SLEEPS].bit,
 //                 t_stats[t_id].quorum_reads, (uint16_t) epoch_id,
-//                 t_stats[t_id].cache_hits_per_thread, t_stats[t_id].failed_rem_writes,
+//                 t_stats[t_id].total_reqs, t_stats[t_id].failed_rem_writes,
 //                 t_stats[t_id].writes_sent, t_stats[t_id].writes_asked_by_clients);
 //        }
       cp_ctx->debug_loop->loop_counter = 0;

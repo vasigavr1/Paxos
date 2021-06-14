@@ -8,6 +8,7 @@
 #include <cp_config.h>
 #include "cp_main.h"
 #include "cp_debug_util.h"
+#include "cp_paxos_debug.h"
 #include "od_wrkr_side_calls.h"
 #include "cp_reserve_stations_util.h"
 
@@ -188,6 +189,40 @@ static inline void find_out_if_can_accept_help_locally(mica_op_t *kv_ptr,
   }
 }
 
+
+static inline void reset_all_aboard_accept(loc_entry_t *loc_entry,
+                                           uint16_t t_id)
+{
+  if (ENABLE_ALL_ABOARD && loc_entry->all_aboard) {
+    if (ENABLE_STAT_COUNTING) {
+      t_stats[t_id].all_aboard_rmws++;
+    }
+    loc_entry->all_aboard = false;
+  }
+}
+
+static inline bool not_ready_to_inspect_propose(loc_entry_t * loc_entry)
+{
+  if (loc_entry->rmw_reps.ready_to_inspect) return false;
+  else {
+    if (ENABLE_ASSERTIONS) assert(loc_entry->rmw_reps.tot_replies < QUORUM_NUM);
+    loc_entry->stalled_reason = STALLED_BECAUSE_NOT_ENOUGH_REPS;
+    return true;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+//------------------------------PROPOSING------------------------------------------
+//---------------------------------------------------------------------------*/
+static inline void set_kilalble_flag(loc_entry_t *loc_entry) {
+  if (ENABLE_CAS_CANCELLING) {
+    loc_entry->killable = (loc_entry->state == RETRY_WITH_BIGGER_TS ||
+                           loc_entry->state == NEEDS_KV_PTR) &&
+                          loc_entry->accepted_log_no == 0 &&
+                          loc_entry->opcode == COMPARE_AND_SWAP_WEAK;
+
+  }
+}
 
 /* ---------------------------------------------------------------------------
 //------------------------------COMMITTING------------------------------------

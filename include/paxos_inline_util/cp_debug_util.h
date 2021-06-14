@@ -94,6 +94,20 @@ static inline void check_trace_req(cp_ctx_t *cp_ctx, trace_t *trace, trace_op_t 
   }
 }
 
+static inline void sending_stats(context_t *ctx,
+                                 uint16_t qp_id,
+                                 uint8_t coalesce_num)
+{
+  od_sending_stats(&t_stats[ctx->t_id].qp_stats[qp_id], coalesce_num);
+}
+
+static inline void receiving_stats(context_t *ctx,
+                                   uint16_t qp_id,
+                                   uint8_t coalesce_num)
+{
+  od_receiving_stats(&t_stats[ctx->t_id].qp_stats[qp_id], coalesce_num);
+}
+
 
 static inline void send_prop_checks(context_t *ctx)
 {
@@ -125,9 +139,7 @@ static inline void send_prop_checks(context_t *ctx)
     }
 
   }
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[ctx->t_id].proposes_sent++;
-  }
+  sending_stats(ctx, PROP_QP_ID, coalesce_num);
 }
 
 
@@ -159,11 +171,8 @@ static inline void send_acc_checks(context_t *ctx)
                 acc->t_rmw_id, acc->t_rmw_id % GLOBAL_SESSION_NUM,
                 acc->log_no, acc->ts.version);
     }
-
   }
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[ctx->t_id].accepts_sent++;
-  }
+  sending_stats(ctx, ACC_QP_ID, coalesce_num);
 }
 
 
@@ -206,11 +215,8 @@ static inline void send_com_checks(context_t *ctx)
                 com->t_rmw_id, com->t_rmw_id % GLOBAL_SESSION_NUM,
                 com->log_no, com->base_ts.version);
     }
-
   }
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[ctx->t_id].accepts_sent++;
-  }
+  sending_stats(ctx, COM_QP_ID, coalesce_num);
 }
 
 
@@ -235,7 +241,7 @@ static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
               rep_mes->m_id,
               rep_mes->opcode);
 
-
+  sending_stats(ctx, qp_id, slot_meta->coalesce_num);
 }
 
 
@@ -430,14 +436,7 @@ static inline void check_keys_with_one_trace_op(struct key *com_key, mica_op_t *
 
 
 
-// Check that the counter for propose replies add up(SAME FOR ACCEPTS AND PROPS)
-static inline void check_sum_of_reps(loc_entry_t *loc_entry)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->rmw_reps.tot_replies == sum_of_reps(&loc_entry->rmw_reps));
-    assert(loc_entry->rmw_reps.tot_replies <= MACHINE_NUM);
-  }
-}
+
 
 
 
@@ -675,12 +674,7 @@ static inline void check_when_polling_for_props(context_t* ctx,
     }
     if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_PROP) assert(false);
   }
-  if (ENABLE_STAT_COUNTING) {
-    if (ENABLE_ASSERTIONS)
-      t_stats[ctx->t_id].per_worker_props_received[prop_mes->m_id] += coalesce_num;
-    t_stats[ctx->t_id].received_props += coalesce_num;
-    t_stats[ctx->t_id].received_props_mes_num++;
-  }
+  receiving_stats(ctx, PROP_QP_ID, coalesce_num);
 }
 
 static inline void check_when_polling_for_accs(context_t* ctx,
@@ -709,10 +703,7 @@ static inline void check_when_polling_for_accs(context_t* ctx,
     }
     if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_ACC) assert(false);
   }
-  if (ENABLE_STAT_COUNTING) {
-    //t_stats[ctx->t_id].received_reads += coalesce_num;
-    //t_stats[ctx->t_id].received_reads_mes_num++;
-  }
+  receiving_stats(ctx, ACC_QP_ID, coalesce_num);
 }
 
 
@@ -741,10 +732,7 @@ static inline void check_when_polling_for_coms(context_t* ctx,
     }
     if (qp_meta->polled_messages + coalesce_num > MAX_INCOMING_COM) assert(false);
   }
-  if (ENABLE_STAT_COUNTING) {
-    //t_stats[ctx->t_id].received_reads += coalesce_num;
-    //t_stats[ctx->t_id].received_reads_mes_num++;
-  }
+  receiving_stats(ctx, COM_QP_ID, coalesce_num);
 }
 
 
@@ -1316,18 +1304,14 @@ static inline void print_after_stealing_proposed(mica_op_t *kv_ptr,
 
 //-------------------------SENDING ACKS
 // This is to be called from within odyssey
-static inline void checks_stats_prints_when_sending_acks(ctx_ack_mes_t *acks,
-                                                         uint8_t m_i, uint16_t t_id)
+static inline void checks_stats_prints_when_sending_acks(context_t *ctx,
+                                                         ctx_ack_mes_t *acks,
+                                                         uint8_t m_i)
 {
-  if (ENABLE_STAT_COUNTING) {
-    t_stats[t_id].per_worker_acks_sent[m_i] += acks[m_i].ack_num;
-    t_stats[t_id].per_worker_acks_mes_sent[m_i]++;
-    t_stats[t_id].acks_sent += acks[m_i].ack_num;
-    t_stats[t_id].acks_sent_mes_num++;
-  }
+  sending_stats(ctx, ACK_QP_ID, acks[m_i].ack_num);
   if (DEBUG_ACKS)
     my_printf(yellow, "Wrkr %d is sending an ack  to machine %u for lid %lu, credits %u and ack num %d and m id %d \n",
-              t_id, m_i, acks[m_i].l_id, acks[m_i].credits, acks[m_i].ack_num, acks[m_i].m_id);
+              ctx->t_id, m_i, acks[m_i].l_id, acks[m_i].credits, acks[m_i].ack_num, acks[m_i].m_id);
 
   if (ENABLE_ASSERTIONS) {
     assert(acks[m_i].credits <= acks[m_i].ack_num);
