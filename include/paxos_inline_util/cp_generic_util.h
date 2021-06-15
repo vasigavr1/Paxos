@@ -403,10 +403,59 @@ static inline bool same_rmw_id_same_log(mica_op_t *kv_ptr, loc_entry_t *loc_entr
 }
 
 
+static inline mica_key_t* key_ptr_of_rmw_op(void **ops,
+                                            uint16_t op_i,
+                                            bool is_accept)
+{
+  return is_accept?
+         &(((cp_acc_t **) ops)[op_i]->key) :
+         &(((cp_prop_t **) ops)[op_i]->key);
+}
+
+static inline mica_key_t key_of_rmw_op(void **ops,
+                                       uint16_t op_i,
+                                       bool is_accept)
+{
+  return is_accept?
+         ((cp_acc_t **) ops)[op_i]->key :
+         ((cp_prop_t **) ops)[op_i]->key;
+}
+
+static inline void fill_ptr_to_ops_for_reps(cp_ptrs_to_ops_t *polled_messages,
+                                            void* op,
+                                            void *op_mes,
+                                            uint16_t i)
+{
+  polled_messages->ptr_to_ops[polled_messages->polled_ops] = op;
+  polled_messages->ptr_to_mes[polled_messages->polled_ops] = op_mes;
+  polled_messages->break_message[polled_messages->polled_ops] = i == 0;
+  polled_messages->polled_ops++;
+}
+
+
+
+static inline void cp_rmw_rep_insert(context_t *ctx,
+                                 mica_op_t **kv_ptr,
+                                 uint32_t op_i,
+                                 bool is_accept)
+{
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_ptrs_to_ops_t *ptrs_to_op = cp_ctx->ptrs_to_ops;
+  rmw_rep_flag_t flag = {
+    .is_accept = is_accept,
+    .op_i = (uint16_t) op_i
+  };
+  uint32_t source_flag = *(uint32_t*) &flag;
+  od_insert_mes(ctx, RMW_REP_QP_ID, RMW_REP_SMALL_SIZE, 0,
+                ptrs_to_op->break_message[op_i],
+                (void *) kv_ptr[op_i], source_flag, 0);
+}
+
+
 static inline void cp_prop_insert(context_t *ctx, loc_entry_t *loc_entry)
 {
   od_insert_mes(ctx, PROP_QP_ID,
-                (uint32_t)PROP_SIZE,
+                (uint32_t) PROP_SIZE,
                 PROP_REP_SIZE,
                 false, loc_entry,
                 0, 0);

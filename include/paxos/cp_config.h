@@ -19,13 +19,13 @@ void cp_stats(stats_ctx_t *ctx);
 
 
 // CORE CONFIGURATION
-#define PROP_CREDITS 6//
-#define ACC_CREDITS PROP_CREDITS
-#define PROP_COALESCE 10
+#define PROP_CREDITS 8//
+#define ACC_CREDITS 8
+#define PROP_COALESCE 8
 #define ACC_COALESCE PROP_COALESCE
 #define MAX_PROP_ACC_COALESCE (MAX(PROP_COALESCE, ACC_COALESCE))
-#define COM_COALESCE 10
-#define COM_CREDITS 6
+#define COM_COALESCE 20
+#define COM_CREDITS 8
 
 #define MEASURE_SLOW_PATH 0
 #define MAX_OP_BATCH SESSIONS_PER_THREAD
@@ -36,7 +36,7 @@ void cp_stats(stats_ctx_t *ctx);
 
 #define ENABLE_COMMITS_WITH_NO_VAL 1
 #define ENABLE_CAS_CANCELLING 1
-#define ENABLE_ALL_ABOARD 0
+#define ENABLE_ALL_ABOARD 1
 
 
 // TIMEOUTS

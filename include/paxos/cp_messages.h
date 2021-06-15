@@ -54,6 +54,12 @@
 #define ACC_REP_MES_SIZE (RMW_REP_MES_HEADER + (ACC_COALESCE * ACC_REP_SIZE)) //Message size of replies to accepts
 #define ACC_REP_RECV_SIZE (GRH_SIZE + ACC_REP_MES_SIZE)
 
+#define MAX_RMW_REP_WRS (MAX_PROP_REP_WRS + MAX_ACC_REP_WRS)
+#define MAX_RECV_RMW_REP_WRS (MAX_RECV_PROP_REP_WRS + MAX_RECV_ACC_REP_WRS)
+#define RMW_REP_RECV_SIZE MAX(PROP_REP_RECV_SIZE, ACC_REP_RECV_SIZE)
+#define RMW_REP_MES_SIZE MAX(PROP_REP_MES_SIZE, ACC_REP_MES_SIZE)
+#define RMW_REP_FIFO_SIZE (PROP_REP_FIFO_SIZE + ACC_REP_FIFO_SIZE)
+
 // ACCEPTS -- ACCEPT coalescing is derived from max write capacity. ACC reps are derived from accept coalescing
 #define ACC_MES_HEADER (10) //l_id 8 , coalesce_num 1
 #define ACC_HEADER (35 + 5 + 4) //original l_id 8 key 8 rmw-id 10, last-committed rmw_id 10, ts 5 log_no 4 opcode 1, val_len 1
@@ -66,6 +72,8 @@
 #define MAX_RECV_ACC_WRS ((ACC_CREDITS * REM_MACH_NUM) + RECV_WR_SAFETY_MARGIN)
 #define MAX_INCOMING_ACC (MAX_RECV_ACC_WRS * ACC_COALESCE)
 #define ACC_REP_FIFO_SIZE (MAX_INCOMING_ACC)
+
+#define MAX_INCOMING_RMW MAX(MAX_INCOMING_ACC, MAX_INCOMING_PROP)
 
 
 // COMMITS

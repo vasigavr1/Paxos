@@ -49,7 +49,7 @@ void cp_static_assert_compile_parameters()
   static_assert(sizeof(cp_acc_t) == ACC_SIZE, "");
   static_assert(PROP_REP_ACCEPTED_SIZE == PROP_REP_LOG_TOO_LOW_SIZE + 1, "");
   static_assert(sizeof(cp_rmw_rep_t) == PROP_REP_ACCEPTED_SIZE, "");
-  static_assert(sizeof(cp_rmw_rep_mes_t) == PROP_REP_MES_SIZE, "");
+  //static_assert(sizeof(cp_rmw_rep_mes_t) == PROP_REP_MES_SIZE, "");
   static_assert(sizeof(cp_com_t) == COM_SIZE, "");
   // UD- REQS
   static_assert(sizeof(cp_prop_mes_ud_t) == PROP_RECV_SIZE, "");
@@ -74,7 +74,7 @@ void cp_static_assert_compile_parameters()
 
 void cp_print_parameters_in_the_start()
 {
-  emphatic_print(green, "CLASSIC PAXOS");
+  emphatic_print(green, ENABLE_ALL_ABOARD ? "ALL-ABOARD PAXOS" : "CLASSIC PAXOS");
   if (ENABLE_ASSERTIONS) {
 
     printf("MICA OP capacity %ld/%d added padding %d  \n",
@@ -189,18 +189,18 @@ void cp_qp_meta_mfs(context_t *ctx)
   mfs[PROP_QP_ID].recv_kvs = cp_KVS_batch_op_props;
 
 
-  mfs[PROP_REP_QP_ID].insert_helper = cp_insert_prop_rep_helper;
-  mfs[PROP_REP_QP_ID].send_helper = cp_prop_rep_helper;
-  mfs[PROP_REP_QP_ID].recv_handler = cp_prop_rep_recv_handler;
+  mfs[RMW_REP_QP_ID].insert_helper = cp_insert_rmw_rep_helper;
+  mfs[RMW_REP_QP_ID].send_helper = rmw_prop_rep_helper;
+  mfs[RMW_REP_QP_ID].recv_handler = cp_rmw_rep_recv_handler;
 
   mfs[ACC_QP_ID].insert_helper = cp_insert_acc_help;
   mfs[ACC_QP_ID].send_helper = send_accs_helper;
   mfs[ACC_QP_ID].recv_handler = acc_recv_handler;
   mfs[ACC_QP_ID].recv_kvs = cp_KVS_batch_op_accs;
 
-  mfs[ACC_REP_QP_ID].insert_helper = cp_insert_acc_rep_helper;
-  mfs[ACC_REP_QP_ID].send_helper = cp_acc_rep_helper;
-  mfs[ACC_REP_QP_ID].recv_handler = cp_acc_rep_recv_handler;
+  //mfs[ACC_REP_QP_ID].insert_helper = cp_insert_acc_rep_helper;
+  //mfs[ACC_REP_QP_ID].send_helper = cp_acc_rep_helper;
+  //mfs[ACC_REP_QP_ID].recv_handler = cp_acc_rep_recv_handler;
 
   mfs[COM_QP_ID].insert_helper = cp_insert_com_help;
   mfs[COM_QP_ID].send_helper = cp_send_coms_helper;
@@ -220,40 +220,40 @@ void cp_init_qp_meta(context_t *ctx)
   per_qp_meta_t *qp_meta = ctx->qp_meta;
   create_per_qp_meta(&qp_meta[PROP_QP_ID], MAX_PROP_WRS,
                      MAX_RECV_PROP_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
-                     PROP_REP_QP_ID,
+                     RMW_REP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, PROP_BUF_SLOTS,
                      PROP_RECV_SIZE, PROP_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
                      PROP_SEND_MCAST_QP, 0, PROP_FIFO_SIZE,
                      PROP_CREDITS, PROP_MES_HEADER,
                      "send props", "recv props");
 
-  create_per_qp_meta(&qp_meta[PROP_REP_QP_ID], MAX_PROP_REP_WRS,
-                     MAX_RECV_PROP_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
+  create_per_qp_meta(&qp_meta[RMW_REP_QP_ID], MAX_RMW_REP_WRS,
+                     MAX_RECV_RMW_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
                      PROP_QP_ID,
-                     REM_MACH_NUM, REM_MACH_NUM, PROP_REP_BUF_SLOTS,
-                     PROP_REP_RECV_SIZE, PROP_REP_MES_SIZE, false, false,
-                     0, 0, PROP_REP_FIFO_SIZE,
+                     REM_MACH_NUM, REM_MACH_NUM, RMW_REP_BUF_SLOTS,
+                     RMW_REP_RECV_SIZE, RMW_REP_MES_SIZE, false, false,
+                     0, 0, RMW_REP_FIFO_SIZE,
                      0, RMW_REP_MES_HEADER,
-                     "send prop_reps", "recv prop_reps");
+                     "send rmw_reps", "recv rmw_reps");
 
   ///
   create_per_qp_meta(&qp_meta[ACC_QP_ID], MAX_ACC_WRS,
                      MAX_RECV_ACC_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,
-                     ACC_REP_QP_ID,
+                     RMW_REP_QP_ID,
                      REM_MACH_NUM, REM_MACH_NUM, ACC_BUF_SLOTS,
                      ACC_RECV_SIZE, ACC_MES_SIZE, ENABLE_MULTICAST, ENABLE_MULTICAST,
                      ACC_SEND_MCAST_QP, 0, ACC_FIFO_SIZE,
                      ACC_CREDITS, ACC_MES_HEADER,
                      "send accepts", "recv accepts");
 
-  create_per_qp_meta(&qp_meta[ACC_REP_QP_ID], MAX_ACC_REP_WRS,
-                     MAX_RECV_ACC_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
-                     ACC_QP_ID,
-                     REM_MACH_NUM, REM_MACH_NUM, ACC_REP_BUF_SLOTS,
-                     ACC_REP_RECV_SIZE, ACC_REP_MES_SIZE, false, false,
-                     0, 0, ACC_REP_FIFO_SIZE,
-                     0, RMW_REP_MES_HEADER,
-                     "send accepts reps", "recv accepts reps");
+  //create_per_qp_meta(&qp_meta[ACC_REP_QP_ID], MAX_ACC_REP_WRS,
+  //                   MAX_RECV_ACC_REP_WRS, SEND_UNI_REP_RECV_UNI_REP, RECV_REPLY,
+  //                   ACC_QP_ID,
+  //                   REM_MACH_NUM, REM_MACH_NUM, ACC_REP_BUF_SLOTS,
+  //                   ACC_REP_RECV_SIZE, ACC_REP_MES_SIZE, false, false,
+  //                   0, 0, ACC_REP_FIFO_SIZE,
+  //                   0, RMW_REP_MES_HEADER,
+  //                   "send accepts reps", "recv accepts reps");
 
   create_per_qp_meta(&qp_meta[COM_QP_ID], MAX_COM_WRS,
                      MAX_RECV_COM_WRS, SEND_BCAST_RECV_BCAST, RECV_REQ,

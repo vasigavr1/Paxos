@@ -126,10 +126,10 @@ typedef struct trace_op trace_op_t;
 typedef struct cp_cp_ctx_debug cp_debug_t;
 
 typedef struct cp_ptr_to_ops {
-  uint16_t polled_ops;
   void **ptr_to_ops;
   void **ptr_to_mes;
   bool *break_message;
+  uint16_t polled_ops;
 } cp_ptrs_to_ops_t;
 
 
@@ -171,6 +171,11 @@ typedef struct cp_cp_ctx_debug {
 // Registering data structure
 extern atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 
+typedef struct rmw_rep_flag {
+  bool is_accept;
+  uint8_t unused;
+  uint16_t op_i;
+} rmw_rep_flag_t;
 
 
 typedef struct commit_info {

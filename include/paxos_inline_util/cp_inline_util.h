@@ -110,10 +110,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
     if (state == PROPOSED)
       inspect_proposes(ctx, loc_entry, t_id);
 
-    if (loc_entry->state == MUST_BCAST_COMMITS || loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP) {
-      if (inspect_commits(ctx, loc_entry, cp_ctx->com_rob->capacity))
-        continue;
-    }
+
 
     /* =============== RETRY ======================== */
     if (loc_entry->state == RETRY_WITH_BIGGER_TS) {
@@ -125,11 +122,15 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
       }
     }
 
+    if (loc_entry->state == MUST_BCAST_COMMITS ||
+        loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP) {
+      if (inspect_commits(ctx, loc_entry, cp_ctx->com_rob->capacity))
+        continue;
+    }
+
     /* =============== NEEDS_KV_PTR ======================== */
     if (state == NEEDS_KV_PTR) {
       handle_needs_kv_ptr_state(ctx, loc_entry, sess_i, t_id);
-      check_state_with_allowed_flags(6, (int) loc_entry->state, INVALID_RMW, PROPOSED, NEEDS_KV_PTR,
-                                     ACCEPTED, MUST_BCAST_COMMITS);
     }
 
   }
@@ -161,14 +162,10 @@ static inline void cp_send_coms_helper(context_t *ctx)
 //------------------------------ UNICASTS-------------------------------------
 //---------------------------------------------------------------------------*/
 
-static inline void cp_prop_rep_helper(context_t *ctx)
+static inline void rmw_prop_rep_helper(context_t *ctx)
 {
-  send_rmw_rep_checks(ctx, PROP_REP_QP_ID);
-}
-
-static inline void cp_acc_rep_helper(context_t *ctx)
-{
-  send_rmw_rep_checks(ctx, ACC_REP_QP_ID);
+  ctx_refill_recvs(ctx, ACC_QP_ID);
+  send_rmw_rep_checks(ctx);
 }
 
 
@@ -189,13 +186,17 @@ static inline void cp_send_ack_debug(context_t *ctx,
 /* ---------------------------------------------------------------------------
 //------------------------------ POLLING-------------------------------------
 //---------------------------------------------------------------------------*/
+
+
 static inline bool prop_recv_handler(context_t* ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[PROP_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile cp_prop_mes_ud_t *incoming_props = (volatile cp_prop_mes_ud_t *) recv_fifo->fifo;
-  cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) &incoming_props[recv_fifo->pull_ptr].prop_mes;
+  volatile cp_prop_mes_ud_t *incoming_props =
+      (volatile cp_prop_mes_ud_t *) recv_fifo->fifo;
+  cp_prop_mes_t *prop_mes = (cp_prop_mes_t *)
+      &incoming_props[recv_fifo->pull_ptr].prop_mes;
 
   check_when_polling_for_props(ctx, prop_mes);
 
@@ -207,10 +208,8 @@ static inline bool prop_recv_handler(context_t* ctx)
   for (uint16_t i = 0; i < coalesce_num; i++) {
     cp_prop_t *prop = &prop_mes->prop[i];
     check_state_with_allowed_flags(2, prop->opcode, PROPOSE_OP);
-    ptrs_to_prop->ptr_to_ops[ptrs_to_prop->polled_ops] = (void *) prop;
-    ptrs_to_prop->ptr_to_mes[ptrs_to_prop->polled_ops] = (void *) prop_mes;
-    ptrs_to_prop->break_message[ptrs_to_prop->polled_ops] = i == 0;
-    ptrs_to_prop->polled_ops++;
+    fill_ptr_to_ops_for_reps(ptrs_to_prop, (void *) prop,
+                             (void *) prop_mes, i);
   }
 
   return true;
@@ -234,45 +233,56 @@ static inline bool acc_recv_handler(context_t* ctx)
   for (uint16_t i = 0; i < coalesce_num; i++) {
     cp_acc_t *acc = &acc_mes->acc[i];
     check_state_with_allowed_flags(2, acc->opcode, ACCEPT_OP);
-    ptrs_to_acc->ptr_to_ops[ptrs_to_acc->polled_ops] = (void *) acc;
-    ptrs_to_acc->ptr_to_mes[ptrs_to_acc->polled_ops] = (void *) acc_mes;
-    ptrs_to_acc->break_message[ptrs_to_acc->polled_ops] = i == 0;
-    ptrs_to_acc->polled_ops++;
+    fill_ptr_to_ops_for_reps(ptrs_to_acc, (void *) acc,
+                             (void *) acc_mes, i);
   }
   return true;
 }
 
-static inline void cp_rmw_rep_recv_handler(context_t* ctx, uint16_t qp_id)
+static inline bool rmw_recv_handler(context_t* ctx,
+                                    uint16_t qp_id)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  fifo_t *recv_fifo = qp_meta->recv_fifo;
+  volatile cp_acc_mes_ud_t *incoming_accs = (volatile cp_acc_mes_ud_t *) recv_fifo->fifo;
+  cp_acc_mes_t *acc_mes = (cp_acc_mes_t *) &incoming_accs[recv_fifo->pull_ptr].acc_mes;
+
+  check_when_polling_for_accs(ctx, acc_mes);
+
+  uint8_t coalesce_num = acc_mes->coalesce_num;
+
+  cp_ptrs_to_ops_t *ptrs_to_acc = cp_ctx->ptrs_to_ops;
+  if (qp_meta->polled_messages == 0) ptrs_to_acc->polled_ops = 0;
+
+  for (uint16_t i = 0; i < coalesce_num; i++) {
+    cp_acc_t *acc = &acc_mes->acc[i];
+    check_state_with_allowed_flags(2, acc->opcode, ACCEPT_OP);
+    fill_ptr_to_ops_for_reps(ptrs_to_acc, (void *) acc,
+                             (void *) acc_mes, i);
+  }
+  return true;
+}
+
+
+
+static inline bool cp_rmw_rep_recv_handler(context_t* ctx)
+{
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[RMW_REP_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
   volatile cp_rmw_rep_mes_ud_t *incoming_reps =
       (volatile cp_rmw_rep_mes_ud_t *) recv_fifo->fifo;
   cp_rmw_rep_mes_t *rep_mes =
       (cp_rmw_rep_mes_t *) &incoming_reps[recv_fifo->pull_ptr].rep_mes;
 
-
-  bool is_accept = qp_id == ACC_REP_QP_ID;
-
-
+  bool is_accept = rep_mes->opcode == ACCEPT_REPLY;
   increment_prop_acc_credits(ctx, rep_mes, is_accept);
   handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
-}
-
-static inline bool cp_prop_rep_recv_handler(context_t* ctx)
-{
-  //printf("Sending propose rep \n");
-  cp_rmw_rep_recv_handler(ctx, PROP_REP_QP_ID);
   return true;
 }
 
-static inline bool cp_acc_rep_recv_handler(context_t* ctx)
-{
-  //printf("Sending accept rep \n");
-  cp_rmw_rep_recv_handler(ctx, ACC_REP_QP_ID);
-  return true;
-}
+
 
 static inline bool cp_com_recv_handler(context_t* ctx)
 {
@@ -401,8 +411,8 @@ _Noreturn static void cp_main_loop(context_t *ctx)
     for (uint16_t qp_i = 0; qp_i < QP_NUM; qp_i ++)
       ctx_poll_incoming_messages(ctx, qp_i);
 
-    ctx_send_unicasts(ctx, PROP_REP_QP_ID);
-    ctx_send_unicasts(ctx, ACC_REP_QP_ID);
+    ctx_send_unicasts(ctx, RMW_REP_QP_ID);
+    //ctx_send_unicasts(ctx, ACC_REP_QP_ID);
     od_send_acks(ctx, ACK_QP_ID);
 
     inspect_rmws(ctx, ctx->t_id);

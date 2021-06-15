@@ -58,6 +58,21 @@ static inline void check_version(uint32_t version, const char *message) {
   }
 }
 
+static inline void check_received_rmw_in_KVS(void **ops,
+                                             uint16_t op_i,
+                                             bool is_accept)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (is_accept) {
+      cp_acc_t **accs = (cp_acc_t **) ops;
+      assert(accs[op_i]->opcode == ACCEPT_OP);
+    }
+    else {
+      cp_prop_t **props = (cp_prop_t **) ops;
+      assert(props[op_i]->opcode == PROPOSE_OP);
+    }
+  }
+}
 
 // Print the rep info received for a propose or an accept
 static inline void print_rmw_rep_info(loc_entry_t *loc_entry, uint16_t t_id) {
@@ -220,17 +235,15 @@ static inline void send_com_checks(context_t *ctx)
 }
 
 
-static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
+static inline void send_rmw_rep_checks(context_t *ctx)
 {
-  if (!ENABLE_ASSERTIONS) return;
-
-  bool is_accept = qp_id == ACC_REP_QP_ID;
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[RMW_REP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
 
   cp_rmw_rep_mes_t *rep_buf = (cp_rmw_rep_mes_t *) qp_meta->send_fifo->fifo;
   cp_rmw_rep_mes_t *rep_mes = &rep_buf[send_fifo->pull_ptr];
+  bool is_accept = rep_mes->opcode == ACCEPT_REPLY;
   slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
   if (DEBUG_RMW)
     my_printf(yellow, "Worker %u sending %s rep_mes l_id %lu, coalesce %u, to m_id %u, opcode %u\n",
@@ -241,7 +254,7 @@ static inline void send_rmw_rep_checks(context_t *ctx, uint16_t qp_id)
               rep_mes->m_id,
               rep_mes->opcode);
 
-  sending_stats(ctx, qp_id, slot_meta->coalesce_num);
+  sending_stats(ctx, RMW_REP_QP_ID, slot_meta->coalesce_num);
 }
 
 

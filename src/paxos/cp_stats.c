@@ -3,20 +3,6 @@
 void print_latency_stats(void);
 
 
-static inline void get_all_wrkr_stats(stats_ctx_t *ctx)
-{
-  t_stats_t *curr_w_stats = ctx->curr_w_stats;
-  t_stats_t *prev_w_stats = ctx->prev_w_stats;
-  t_stats_t *all_per_t = ctx->all_per_t;
-  for (int i = 0; i < WORKERS_PER_MACHINE; i++) {
-    stats_per_thread((uint64_t *) &curr_w_stats[i],
-                     (uint64_t *) &prev_w_stats[i],
-                     (uint64_t *) ctx->all_aggreg,
-                     (uint64_t *) &all_per_t[i],
-                     sizeof(t_stats_t));
-  }
-  memcpy(prev_w_stats, curr_w_stats, WORKERS_PER_MACHINE * (sizeof(struct thread_stats)));
-}
 
 static inline void show_aggregate_stats(stats_ctx_t *ctx)
 {
@@ -47,11 +33,13 @@ static inline void show_per_thread_stats(stats_ctx_t *ctx)
               per_sec(ctx, all_per_t[i].qp_stats[ACC_QP_ID].sent),
               per_sec(ctx, all_per_t[i].qp_stats[COM_QP_ID].sent));
     my_printf(yellow, ", BATCHES: "
-                      "Acks %.2f, Props %.2f, Accs %.2f, Coms %.2f",
-              get_batch(ctx, &all_per_t[i].qp_stats[ACK_QP_ID]),
+                      "Props %.2f, Accs %.2f, Coms %.2f,"
+                      " Reps %.2f, Acks %.2f",
               get_batch(ctx, &all_per_t[i].qp_stats[PROP_QP_ID]),
               get_batch(ctx, &all_per_t[i].qp_stats[ACC_QP_ID]),
-              get_batch(ctx, &all_per_t[i].qp_stats[COM_QP_ID]));
+              get_batch(ctx, &all_per_t[i].qp_stats[COM_QP_ID]),
+              get_batch(ctx, &all_per_t[i].qp_stats[RMW_REP_QP_ID]),
+              get_batch(ctx, &all_per_t[i].qp_stats[ACK_QP_ID]));
     printf("\n");
   }
   printf("\n");
@@ -63,7 +51,8 @@ static inline void show_per_thread_stats(stats_ctx_t *ctx)
 
 void cp_stats(stats_ctx_t *ctx)
 {
-  get_all_wrkr_stats(ctx);
+  get_all_wrkr_stats(ctx, WORKERS_PER_MACHINE, sizeof(t_stats_t));
+  memcpy(ctx->prev_w_stats, ctx->curr_w_stats, WORKERS_PER_MACHINE * (sizeof(t_stats_t)));
 
   if (SHOW_AGGREGATE_STATS)
     show_aggregate_stats(ctx);

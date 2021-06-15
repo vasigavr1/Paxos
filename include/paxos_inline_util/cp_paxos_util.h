@@ -911,7 +911,6 @@ static inline void set_up_a_proposed_but_not_locally_acked_entry(cp_ctx_t *cp_ct
   loc_entry->rmw_reps.tot_replies = 1;
   loc_entry->rmw_reps.already_accepted = 1;
   logging_proposed_but_not_locally_acked(kv_ptr, loc_entry, help_loc_entry, t_id);
-
 }
 
 
@@ -1352,6 +1351,8 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
     loc_entry->back_off_cntr = 0;
     cp_prop_insert(ctx, loc_entry);
   }
+  check_state_with_allowed_flags(6, (int) loc_entry->state, INVALID_RMW, PROPOSED, NEEDS_KV_PTR,
+                                 ACCEPTED, MUST_BCAST_COMMITS);
 
 }
 

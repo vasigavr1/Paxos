@@ -20,7 +20,6 @@
 
 
 
-
 // READ_REPLIES
 #define INVALID_OPCODE 5 // meaningless opcode to help with debugging
 // an r_rep message can be a reply to a read or a prop or an accept
@@ -185,13 +184,13 @@ enum {
 
 
 // QUEUE PAIRS
-#define QP_NUM 6
+#define QP_NUM 5
 #define PROP_QP_ID 0
-#define PROP_REP_QP_ID 1
+#define RMW_REP_QP_ID 1
 #define ACC_QP_ID 2
-#define ACC_REP_QP_ID 3
-#define COM_QP_ID 4
-#define ACK_QP_ID 5
+//#define ACC_REP_QP_ID 3
+#define COM_QP_ID 3
+#define ACK_QP_ID 4
 
 
 

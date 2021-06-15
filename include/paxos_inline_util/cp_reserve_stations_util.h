@@ -174,22 +174,23 @@ static inline uint8_t get_rmw_mes_m_id(void *mes, bool is_accept)
          ((cp_prop_mes_t *) mes)->m_id;
 }
 
+
 static inline void cp_insert_rmw_rep_helper(context_t *ctx,
-                                            cp_rmw_rep_t *rep,
-                                            mica_op_t *kv_ptr,
-                                            uint32_t op_i,
-                                            uint8_t qp_id)
+                                            void* prop_rep_ptr,
+                                            void *kv_ptr, uint32_t source_flag)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  per_qp_meta_t *qp_meta = &ctx->qp_meta[qp_id];
+  per_qp_meta_t *qp_meta = &ctx->qp_meta[RMW_REP_QP_ID];
   fifo_t *send_fifo = qp_meta->send_fifo;
   cp_ptrs_to_ops_t *ptrs_to_ops = cp_ctx->ptrs_to_ops;
-  bool is_accept = qp_id == ACC_REP_QP_ID;
-  void *op = ptrs_to_ops->ptr_to_ops[op_i];
-  void *mes = ptrs_to_ops->ptr_to_mes[op_i];
+  rmw_rep_flag_t  *flag = (rmw_rep_flag_t *) &source_flag;
 
-  is_accept ? create_acc_rep(op, mes, rep, kv_ptr, ctx->t_id) :
-              create_prop_rep(op, mes, rep, kv_ptr, ctx->t_id);
+  void *op = ptrs_to_ops->ptr_to_ops[flag->op_i];
+  void *mes = ptrs_to_ops->ptr_to_mes[flag->op_i];
+  cp_rmw_rep_t * rep = (cp_rmw_rep_t *) prop_rep_ptr;
+
+  flag->is_accept ? create_acc_rep(op, mes, rep, (mica_op_t *) kv_ptr, ctx->t_id) :
+                    create_prop_rep(op, mes, rep, (mica_op_t *) kv_ptr, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   uint16_t rep_size = get_size_from_opcode(rep->opcode) - RMW_REP_SMALL_SIZE;
@@ -197,30 +198,14 @@ static inline void cp_insert_rmw_rep_helper(context_t *ctx,
 
   cp_rmw_rep_mes_t *rep_mes = (cp_rmw_rep_mes_t *) get_fifo_push_slot(send_fifo);
   if (slot_meta->coalesce_num == 1) {
-    rep_mes->l_id = get_rmw_mes_l_id(mes, is_accept);
-    slot_meta->rm_id = get_rmw_mes_m_id(mes, is_accept);
-    rep_mes->opcode = is_accept? ACCEPT_REPLY :PROP_REPLY; //TODO remove the opcode field
+    rep_mes->l_id = get_rmw_mes_l_id(mes, flag->is_accept);
+    slot_meta->rm_id = get_rmw_mes_m_id(mes, flag->is_accept);
+    rep_mes->opcode = flag->is_accept? ACCEPT_REPLY : PROP_REPLY;
     rep_mes->m_id = ctx->m_id;
   }
 
   rep_mes->coalesce_num = slot_meta->coalesce_num;
 }
-
-
-static inline void cp_insert_prop_rep_helper(context_t *ctx, void* prop_rep_ptr,
-                                             void *source, uint32_t op_i)
-{
-  cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) prop_rep_ptr,
-                           (mica_op_t *) source, op_i, PROP_REP_QP_ID);
-}
-
-static inline void cp_insert_acc_rep_helper(context_t *ctx, void* acc_rep_ptr,
-                                             void *source, uint32_t op_i)
-{
-  cp_insert_rmw_rep_helper(ctx, (cp_rmw_rep_t *) acc_rep_ptr,
-                           (mica_op_t *) source, op_i, ACC_REP_QP_ID);
-}
-
 
 static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
                                       void *source, uint32_t source_flag)
