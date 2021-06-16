@@ -194,7 +194,7 @@ static inline void reset_all_aboard_accept(loc_entry_t *loc_entry,
                                            uint16_t t_id)
 {
   if (ENABLE_ALL_ABOARD && loc_entry->all_aboard) {
-    if (ENABLE_STAT_COUNTING) {
+    if (ENABLE_STAT_COUNTING && loc_entry->state == MUST_BCAST_COMMITS) {
       t_stats[t_id].all_aboard_rmws++;
     }
     loc_entry->all_aboard = false;

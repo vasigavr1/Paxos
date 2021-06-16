@@ -1189,16 +1189,11 @@ static inline void clean_up_after_inspecting_props(cp_ctx_t *cp_ctx,
                                                    bool zero_out_log_too_high_cntr,
                                                    uint16_t t_id)
 {
-
   checks_before_resetting_prop(loc_entry);
-
-
   if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
       loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
     loc_entry->helping_flag = NOT_HELPING;
 
-
-  /* -------------------RESET---------------------------*/
   if (loc_entry->rmw_reps.ready_to_inspect)
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
   else if (ENABLE_ASSERTIONS) assert(loc_entry->rmw_reps.tot_replies == 1);
@@ -1206,10 +1201,7 @@ static inline void clean_up_after_inspecting_props(cp_ctx_t *cp_ctx,
   if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
 
   set_kilalble_flag(loc_entry);
-
   check_after_inspecting_prop(loc_entry);
-
-
 }
 
 

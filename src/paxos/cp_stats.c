@@ -7,11 +7,12 @@ void print_latency_stats(void);
 static inline void show_aggregate_stats(stats_ctx_t *ctx)
 {
   t_stats_t *all_aggreg = ctx->all_aggreg;
-  my_printf(green, "%u %.2f, canc: %.2f, all-aboard: %.2f \n",
+  my_printf(green, "%u %.2f, all-aboard: %.2f, canc: %.2f \n",
             ctx->print_count,
             per_sec(ctx, all_aggreg->total_reqs),
-            (double) all_aggreg->cancelled_rmws / (double) all_aggreg->total_reqs,
-            per_sec(ctx, all_aggreg->all_aboard_rmws));
+            per_sec(ctx, all_aggreg->all_aboard_rmws),
+            (double) all_aggreg->cancelled_rmws /
+            (double) all_aggreg->total_reqs);
 }
 
 static inline void show_per_thread_stats(stats_ctx_t *ctx)
