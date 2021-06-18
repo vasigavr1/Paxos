@@ -47,6 +47,8 @@ static inline bool fill_trace_op(context_t *ctx,
   create_inputs_of_op(&op->value_to_write, &op->value_to_read, &op->real_val_len,
                       &op->opcode, &op->index_to_req_array,
                       &op->key, op->value, trace, working_session, t_id);
+  memcpy(&op->key, &cp_ctx->key_per_sess[working_session], sizeof(mica_key_t));
+
   if (!ENABLE_CLIENTS) check_trace_req(cp_ctx, trace, op, working_session, t_id);
 
 
@@ -256,6 +258,8 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   fill_commit_message_from_l_entry(com, loc_entry, source_flag, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
+  if (com->opcode == COMMIT_OP_NO_VAL)
+    slot_meta->byte_size -= COM_SIZE - COMMIT_NO_VAL_SIZE;
   cp_com_mes_t *com_mes = (cp_com_mes_t *) get_fifo_push_slot(send_fifo);
   com_mes->coalesce_num = (uint8_t) slot_meta->coalesce_num;
 

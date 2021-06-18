@@ -150,6 +150,7 @@ typedef struct cp_ctx {
   sess_stall_t stall_info;
   struct l_ids l_ids;
   cp_debug_t *debug_loop;
+  mica_key_t *key_per_sess;
 } cp_ctx_t;
 
 // A helper to debug sessions by remembering which write holds a given session

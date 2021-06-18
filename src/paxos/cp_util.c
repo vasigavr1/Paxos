@@ -162,11 +162,10 @@ void cp_init_send_fifos(context_t *ctx)
   }
 
   send_fifo = ctx->qp_meta[COM_QP_ID].send_fifo;
-  cp_com_mes_t *coms = (cp_com_mes_t *) send_fifo->fifo;
-
   for (uint32_t i = 0; i < COM_FIFO_SIZE; i++) {
-    coms[i].m_id = ctx->m_id;
-    coms[i].opcode = COMMIT_OP;
+    cp_com_mes_t *com_mes = (cp_com_mes_t *) get_fifo_slot_mod(send_fifo, i);
+    com_mes->m_id = ctx->m_id;
+    com_mes->opcode = COMMIT_OP;
   }
 
   ctx_ack_mes_t *ack_send_buf = (ctx_ack_mes_t *) ctx->qp_meta[ACK_QP_ID].send_fifo->fifo;

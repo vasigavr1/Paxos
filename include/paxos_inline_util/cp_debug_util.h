@@ -198,17 +198,35 @@ static inline void send_com_checks(context_t *ctx)
   fifo_t *send_fifo = qp_meta->send_fifo;
 
   // Create the broadcast messages
-  cp_com_mes_t *com_buf = (cp_com_mes_t *) qp_meta->send_fifo->fifo;
-  cp_com_mes_t *com_mes = &com_buf[send_fifo->pull_ptr];
+  cp_com_mes_t *com_mes = (cp_com_mes_t *) get_fifo_pull_slot(qp_meta->send_fifo);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_pull(send_fifo);
   uint8_t coalesce_num = (uint8_t) slot_meta->coalesce_num;
   if (ENABLE_ASSERTIONS) {
+
+    if (DEBUG_COMMITS) {
+      cp_com_t *com = &com_mes->com[0];
+      my_printf(green, "Wrkr %u : I BROADCAST a commit message %u "
+                       "with %u (%u) coms with mes_size %u, with credits: %d, lid: %u, "
+                       "rmw_id %u, glob_sess id %u, log_no %u, base version %u \n",
+                ctx->t_id, com->opcode, com_mes->coalesce_num,
+                slot_meta->coalesce_num,
+                slot_meta->byte_size,
+                qp_meta->credits[(machine_id + 1) % MACHINE_NUM], com_mes->l_id,
+                com->t_rmw_id, com->t_rmw_id % GLOBAL_SESSION_NUM,
+                com->log_no, com->base_ts.version);
+    }
+
     assert(send_fifo->net_capacity >= coalesce_num);
     qp_meta->outstanding_messages += coalesce_num;
     assert(com_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
     assert(com_mes->coalesce_num > 0);
     assert(com_mes->m_id == (uint8_t) ctx->m_id);
+    if (ENABLE_COMMITS_WITH_NO_VAL)
+      assert(slot_meta->byte_size ==
+             COM_MES_HEADER + (coalesce_num *  COMMIT_NO_VAL_SIZE));
+    else assert(slot_meta->byte_size ==
+                    COM_MES_HEADER + (coalesce_num *  COM_SIZE));
 
     for (uint8_t i = 0; i < coalesce_num; i++)
     {
@@ -221,15 +239,7 @@ static inline void send_com_checks(context_t *ctx)
 
     }
 
-    if (DEBUG_RMW) {
-      cp_com_t *com = &com_mes->com[0];
-      my_printf(green, "Wrkr %u : I BROADCAST a commit message %u with %u coms with mes_size %u, with credits: %d, lid: %u, "
-                       "rmw_id %u, glob_sess id %u, log_no %u, base version %u \n",
-                ctx->t_id, com->opcode, coalesce_num, slot_meta->byte_size,
-                qp_meta->credits[(machine_id + 1) % MACHINE_NUM], com_mes->l_id,
-                com->t_rmw_id, com->t_rmw_id % GLOBAL_SESSION_NUM,
-                com->log_no, com->base_ts.version);
-    }
+
   }
   sending_stats(ctx, COM_QP_ID, coalesce_num);
 }
@@ -1328,7 +1338,7 @@ static inline void checks_stats_prints_when_sending_acks(context_t *ctx,
 
   if (ENABLE_ASSERTIONS) {
     assert(acks[m_i].credits <= acks[m_i].ack_num);
-    if (acks[m_i].ack_num > COM_COALESCE) assert(acks[m_i].credits > 1);
+    if (acks[m_i].ack_num > MAX_COM_COALESCE) assert(acks[m_i].credits > 1);
     if (!ENABLE_MULTICAST) assert(acks[m_i].credits <= COM_CREDITS);
     assert(acks[m_i].ack_num > 0);
   }

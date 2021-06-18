@@ -80,20 +80,6 @@ static inline void batch_requests_to_KVS(context_t *ctx)
 //------------------------------ RMW FSM ----------------------------------
 //---------------------------------------------------------------------------*/
 
-//static inline void handle_accept_state(context_t *ctx,
-//                                       loc_entry_t* loc_entry)
-//{
-//  check_sum_of_reps(loc_entry);
-//  //printf("reps %u \n", loc_entry->rmw_reps.tot_replies);
-//  if (loc_entry->rmw_reps.ready_to_inspect) {
-//    loc_entry->rmw_reps.inspected = true;
-//    inspect_accepts(ctx->appl_ctx, loc_entry, ctx->t_id);
-//    check_state_with_allowed_flags(7, (int) loc_entry->state, ACCEPTED, INVALID_RMW, RETRY_WITH_BIGGER_TS,
-//                                   NEEDS_KV_PTR, MUST_BCAST_COMMITS, MUST_BCAST_COMMITS_FROM_HELP);
-//    if (ENABLE_ASSERTIONS && loc_entry->rmw_reps.ready_to_inspect)
-//      assert(loc_entry->state == ACCEPTED && loc_entry->all_aboard);
-//  }
-//}
 
 // Worker inspects its local RMW entries
 static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
@@ -114,6 +100,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 
     /* =============== RETRY ======================== */
     if (loc_entry->state == RETRY_WITH_BIGGER_TS) {
+      assert(false);
       take_kv_ptr_with_higher_TS(cp_ctx, loc_entry, false, t_id);
       check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
                                      NEEDS_KV_PTR, MUST_BCAST_COMMITS);
@@ -130,6 +117,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 
     /* =============== NEEDS_KV_PTR ======================== */
     if (state == NEEDS_KV_PTR) {
+      assert(false);
       handle_needs_kv_ptr_state(ctx, loc_entry, sess_i, t_id);
     }
 
@@ -289,8 +277,8 @@ static inline bool cp_com_recv_handler(context_t* ctx)
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   per_qp_meta_t *qp_meta = &ctx->qp_meta[COM_QP_ID];
   fifo_t *recv_fifo = qp_meta->recv_fifo;
-  volatile cp_com_mes_ud_t *incoming_coms = (volatile cp_com_mes_ud_t *) recv_fifo->fifo;
-  cp_com_mes_t *com_mes = (cp_com_mes_t *) &incoming_coms[recv_fifo->pull_ptr].com_mes;
+  volatile cp_com_mes_ud_t *com_mes_ud = (volatile cp_com_mes_ud_t *) get_fifo_pull_slot(recv_fifo);
+  cp_com_mes_t *com_mes = (cp_com_mes_t *) &com_mes_ud->com_mes;
 
   check_when_polling_for_coms(ctx, com_mes);
   //printf("received commit \n");
@@ -301,9 +289,11 @@ static inline bool cp_com_recv_handler(context_t* ctx)
 
   cp_ptrs_to_ops_t *ptrs_to_com = cp_ctx->ptrs_to_ops;
   if (qp_meta->polled_messages == 0) ptrs_to_com->polled_ops = 0;
-
+  uint32_t byte_ptr = 0;
   for (uint16_t i = 0; i < coalesce_num; i++) {
-    cp_com_t *com = &com_mes->com[i];
+    //cp_com_t *com = &com_mes->com[i];
+    cp_com_t *com = (cp_com_t *)(((void *) com_mes->com) + byte_ptr);
+    byte_ptr += com->opcode == COMMIT_OP ? COM_SIZE : COMMIT_NO_VAL_SIZE ;
     check_state_with_allowed_flags(3, com->opcode, COMMIT_OP, COMMIT_OP_NO_VAL);
     ptrs_to_com->ptr_to_ops[ptrs_to_com->polled_ops] = (void *) com;
     ptrs_to_com->ptr_to_mes[ptrs_to_com->polled_ops] = (void *) com_mes;
@@ -402,6 +392,10 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
 _Noreturn static void cp_main_loop(context_t *ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  cp_ctx->key_per_sess = calloc(SESSIONS_PER_THREAD, sizeof(mica_key_t));
+  for (int i = 0; i < SESSIONS_PER_THREAD; i++){
+    memcpy(&cp_ctx->key_per_sess[i], cp_ctx->trace_info.trace[i].key_hash, sizeof(mica_key_t));
+  }
   while(true) {
 
     cp_checks_at_loop_start(ctx);

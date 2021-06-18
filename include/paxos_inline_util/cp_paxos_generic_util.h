@@ -478,11 +478,13 @@ static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entr
   com->t_rmw_id = loc_entry->rmw_id.id;
   com->base_ts.m_id = loc_entry->base_ts.m_id;
   if (loc_entry->avoid_val_in_com) {
+    assert(ENABLE_COMMITS_WITH_NO_VAL);
     com->opcode = COMMIT_OP_NO_VAL;
     loc_entry->avoid_val_in_com = false;
     com->base_ts.version = loc_entry->log_no;
   }
   else {
+    assert(!ENABLE_COMMITS_WITH_NO_VAL);
     com->opcode = COMMIT_OP;
     com->log_no = loc_entry->log_no;
     com->base_ts.version = loc_entry->base_ts.version;

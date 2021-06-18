@@ -24,7 +24,7 @@ void cp_stats(stats_ctx_t *ctx);
 #define PROP_COALESCE 8
 #define ACC_COALESCE PROP_COALESCE
 #define MAX_PROP_ACC_COALESCE (MAX(PROP_COALESCE, ACC_COALESCE))
-#define COM_COALESCE 20
+#define MAX_COM_SIZE 300
 #define COM_CREDITS 8
 
 #define MEASURE_SLOW_PATH 0
@@ -35,7 +35,7 @@ void cp_stats(stats_ctx_t *ctx);
 // Important Knobs
 
 #define ENABLE_COMMITS_WITH_NO_VAL 1
-#define ENABLE_CAS_CANCELLING 1
+#define ENABLE_CAS_CANCELLING 0
 #define ENABLE_ALL_ABOARD 1
 
 
