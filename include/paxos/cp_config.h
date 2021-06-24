@@ -24,7 +24,7 @@ void cp_stats(stats_ctx_t *ctx);
 #define PROP_COALESCE 8
 #define ACC_COALESCE PROP_COALESCE
 #define MAX_PROP_ACC_COALESCE (MAX(PROP_COALESCE, ACC_COALESCE))
-#define MAX_COM_SIZE 300
+#define MAX_COM_SIZE (8 * 64)
 #define COM_CREDITS 8
 
 #define MEASURE_SLOW_PATH 0
