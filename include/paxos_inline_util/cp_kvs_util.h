@@ -10,7 +10,7 @@
 #include "cp_generic_util.h"
 #include "cp_debug_util.h"
 #include "od_wrkr_side_calls.h"
-#include "cp_paxos_util.h"
+#include "cp_core_util.h"
 
 
 
@@ -22,7 +22,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
                                       uint16_t op_i, uint16_t t_id)
 {
   loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[op->session_id];
-  init_loc_entry(cp_ctx, op, t_id, loc_entry);
+  init_loc_entry(op, t_id, loc_entry);
   if (DEBUG_RMW) my_printf(green, "Worker %u trying a local RMW on op %u\n", t_id, op_i);
   uint32_t new_version = (ENABLE_ALL_ABOARD && op->attempt_all_aboard) ?
                          ALL_ABOARD_TS : PAXOS_TS;

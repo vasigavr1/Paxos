@@ -315,7 +315,7 @@ cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)
   cp_ctx->ptrs_to_ops->ptr_to_mes = calloc(max_incoming_ops, sizeof(void*));
   cp_ctx->ptrs_to_ops->break_message = calloc(max_incoming_ops, sizeof(bool));
 
-  cp_init_loc_entry(cp_ctx, ctx->t_id);
+
   cp_ctx->stall_info.stalled = (bool *) calloc(SESSIONS_PER_THREAD, sizeof(bool));
   for (uint32_t i = 0; i < COM_ROB_SIZE; i++) {
     cp_com_rob_t *com_rob = get_fifo_slot(cp_ctx->com_rob, i);
@@ -327,7 +327,9 @@ cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)
     cp_ctx->trace_info.trace = trace_init(ctx->t_id);
 
   cp_ctx->debug_loop = init_debug_loop_struct();
- return cp_ctx;
+
+  cp_init_loc_entry(cp_ctx, ctx->t_id);
+  return cp_ctx;
 }
 
 

@@ -1,16 +1,16 @@
 //
-// Created by vasilis on 22/05/20.
+// Created by vasilis on 28/06/2021.
 //
 
-#ifndef CP_PAXOS_GENERIC_UTILITY_H
-#define CP_PAXOS_GENERIC_UTILITY_H
+#ifndef CP_CORE_GENERIC_UTIL_H
+#define CP_CORE_GENERIC_UTIL_H
+
 
 #include <cp_config.h>
 #include "cp_main.h"
 #include "cp_debug_util.h"
-#include "cp_paxos_debug.h"
+#include "cp_core_debug.h"
 #include "od_wrkr_side_calls.h"
-#include "cp_reserve_stations_util.h"
 
 
 
@@ -22,8 +22,8 @@ static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_en
   if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
     if (loc_entry->help_loc_entry == NULL) {
       my_printf(red, "When Zeroing: The help_loc_ptr is NULL. The reason is typically that "
-        "help_loc_entry was passed to the function "
-        "instead of loc entry to check \n");
+                     "help_loc_entry was passed to the function "
+                     "instead of loc entry to check \n");
       assert(false);
     }
   }
@@ -84,7 +84,7 @@ static inline void perform_the_rmw_on_the_loc_entry(mica_op_t *kv_ptr,
     default:
       if (ENABLE_ASSERTIONS) assert(false);
   }
-    // we need to remember the last accepted value
+  // we need to remember the last accepted value
   if (loc_entry->rmw_is_successful) {
     write_kv_ptr_acc_val(kv_ptr, loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
   }
@@ -96,27 +96,19 @@ static inline void perform_the_rmw_on_the_loc_entry(mica_op_t *kv_ptr,
 
 
 // free a session held by an RMW
-static inline void free_session_from_rmw(cp_ctx_t *cp_ctx,
-                                         uint16_t sess_id,
+static inline void free_session_from_rmw(loc_entry_t *loc_entry,
+                                         sess_stall_t *stall_info,
                                          bool allow_paxos_log,
                                          uint16_t t_id)
 {
-  loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[sess_id];
-  if (ENABLE_ASSERTIONS) {
-    assert(sess_id < SESSIONS_PER_THREAD);
-    assert(loc_entry->state == INVALID_RMW);
-    if(!cp_ctx->stall_info.stalled[sess_id]) {
-      my_printf(red, "Wrkr %u sess %u should be stalled \n", t_id, sess_id);
-      assert(false);
-    }
-  }
+  check_free_session_from_rmw(loc_entry, stall_info, t_id);
   fill_req_array_when_after_rmw(loc_entry->sess_id, loc_entry->index_to_req_array, loc_entry->opcode,
                                 loc_entry->value_to_read, loc_entry->rmw_is_successful, t_id);
   if (VERIFY_PAXOS && allow_paxos_log) verify_paxos(loc_entry, t_id);
   // my_printf(cyan, "Session %u completing \n", loc_entry->glob_sess_id);
-  signal_completion_to_client(sess_id, loc_entry->index_to_req_array, t_id);
-  cp_ctx->stall_info.stalled[sess_id] = false;
-  cp_ctx->stall_info.all_stalled = false;
+  signal_completion_to_client(loc_entry->sess_id, loc_entry->index_to_req_array, t_id);
+  stall_info->stalled[loc_entry->sess_id] = false;
+  stall_info->all_stalled = false;
 }
 
 
@@ -183,9 +175,9 @@ static inline void find_out_if_can_accept_help_locally(mica_op_t *kv_ptr,
   if (ENABLE_ASSERTIONS) {
     if (*kv_ptr_is_the_same   || *kv_ptr_is_invalid_but_not_committed ||
         *helping_stuck_accept || *propose_locally_accepted)
-    checks_and_prints_local_accept_help(loc_entry, help_loc_entry, kv_ptr, *kv_ptr_is_the_same,
-                                        *kv_ptr_is_invalid_but_not_committed,
-                                        *helping_stuck_accept, *propose_locally_accepted, t_id);
+      checks_and_prints_local_accept_help(loc_entry, help_loc_entry, kv_ptr, *kv_ptr_is_the_same,
+                                          *kv_ptr_is_invalid_but_not_committed,
+                                          *helping_stuck_accept, *propose_locally_accepted, t_id);
   }
 }
 
@@ -250,7 +242,7 @@ static inline void process_commit_flags(void* rmw, loc_entry_t *loc_entry, uint8
     case FROM_LOCAL_ACQUIRE:
     case FROM_OOE_READ:
     case FROM_LOG_TOO_LOW_REP:
-    break;
+      break;
     default:
       if (ENABLE_ASSERTIONS) {printf("%u \n", *flag); assert(false);}
   }
@@ -380,22 +372,16 @@ static inline bool kv_ptr_state_has_changed(mica_op_t *kv_ptr,
 static inline void advance_loc_entry_l_id(loc_entry_t *loc_entry,
                                           uint16_t t_id)
 {
-  loc_entry->l_id += SESSIONS_PER_THREAD; //cp_ctx->prop_info->l_id;
-  loc_entry->help_loc_entry->l_id = loc_entry->l_id;// cp_ctx->prop_info->l_id;
+  loc_entry->l_id += SESSIONS_PER_THREAD;
+  loc_entry->help_loc_entry->l_id = loc_entry->l_id;
   if (ENABLE_ASSERTIONS) assert(loc_entry->l_id % SESSIONS_PER_THREAD == loc_entry->sess_id);
-  // cp_ctx->prop_info->l_id++;
 }
 
 //
-static inline bool if_already_committed_bcast_commits(cp_ctx_t *cp_ctx,
-                                                      loc_entry_t *loc_entry,
+static inline bool if_already_committed_bcast_commits(loc_entry_t *loc_entry,
                                                       uint16_t t_id)
 {
-  if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->state != INVALID_RMW);
-    assert(loc_entry == &cp_ctx->prop_info->entry[loc_entry->sess_id]);
-    assert(loc_entry->helping_flag != HELPING);
-  }
+  check_loc_entry_if_already_committed(loc_entry);
   if (loc_entry->rmw_id.id <= committed_glob_sess_rmw_id[loc_entry->glob_sess_id]) {
     //my_printf(yellow, "Wrkr %u, sess: %u Bcast rmws %u \n", t_id, loc_entry->sess_id);
     loc_entry->log_no = loc_entry->accepted_log_no;
@@ -415,16 +401,16 @@ static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
       kv_ptr->log_no == loc_entry->log_no &&
       rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
       compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL) {
-//    my_printf(cyan, "Wrkr %u, kv_ptr NEEDS TO BE FREED: session %u RMW id %u/%u glob_sess_id %u/%u with version %u/%u,"
-//                  " m_id %u/%u,"
-//                  " kv_ptr log/help log %u/%u kv_ptr committed log %u , biggest committed rmw_id %u for glob sess %u"
-//                  " \n",
-//                t_id, loc_entry->sess_id, loc_entry->rmw_id.id, kv_ptr->rmw_id.id,
-//                loc_entry->rmw_id.glob_sess_id, kv_ptr->rmw_id.glob_sess_id,
-//                loc_entry->new_ts.version, kv_ptr->new_ts.version,
-//                loc_entry->new_ts.m_id, kv_ptr->new_ts.m_id,
-//                kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
-//                committed_glob_sess_rmw_id[kv_ptr->rmw_id.glob_sess_id], kv_ptr->rmw_id.glob_sess_id);
+    //    my_printf(cyan, "Wrkr %u, kv_ptr NEEDS TO BE FREED: session %u RMW id %u/%u glob_sess_id %u/%u with version %u/%u,"
+    //                  " m_id %u/%u,"
+    //                  " kv_ptr log/help log %u/%u kv_ptr committed log %u , biggest committed rmw_id %u for glob sess %u"
+    //                  " \n",
+    //                t_id, loc_entry->sess_id, loc_entry->rmw_id.id, kv_ptr->rmw_id.id,
+    //                loc_entry->rmw_id.glob_sess_id, kv_ptr->rmw_id.glob_sess_id,
+    //                loc_entry->new_ts.version, kv_ptr->new_ts.version,
+    //                loc_entry->new_ts.m_id, kv_ptr->new_ts.m_id,
+    //                kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
+    //                committed_glob_sess_rmw_id[kv_ptr->rmw_id.glob_sess_id], kv_ptr->rmw_id.glob_sess_id);
 
     lock_seqlock(&loc_entry->kv_ptr->seqlock);
     if (kv_ptr->state == state &&
@@ -456,7 +442,7 @@ static inline void bookkeeping_after_gathering_accept_acks(loc_entry_t *loc_entr
     assert(!loc_entry->help_loc_entry->avoid_val_in_com);
   }
   if (!ENABLE_COMMITS_WITH_NO_VAL) return;
-   // Should we send commits without value?
+  // Should we send commits without value?
   if (loc_entry->rmw_reps.acks == MACHINE_NUM) {
     if (loc_entry->helping_flag == HELPING)
       loc_entry->help_loc_entry->avoid_val_in_com = true;
@@ -519,4 +505,7 @@ static inline void fill_reply_entry_with_committed_RMW (mica_op_t *kv_ptr,
 
 
 
-#endif //CP_PAXOS_GENERIC_UTILITY_H
+
+
+
+#endif //CP_CORE_GENERIC_UTIL_H

@@ -8,7 +8,6 @@
 #include "cp_generic_util.h"
 #include "cp_kvs_util.h"
 #include "cp_debug_util.h"
-#include "cp_paxos_util.h"
 #include "cp_reserve_stations_util.h"
 
 #include <stdlib.h>
@@ -72,7 +71,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   t_stats[ctx->t_id].total_reqs += op_i;
   cp_KVS_batch_op_trace(op_i, ops, cp_ctx, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
-    insert_rmw(ctx, &ops[i], ctx->t_id);
+    insert_rmw(ctx, cp_ctx->prop_info, &cp_ctx->stall_info, &ops[i], ctx->t_id);
   }
 }
 
@@ -92,16 +91,15 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
     check_when_inspecting_rmw(loc_entry, &cp_ctx->stall_info, sess_i);
 
     if (state == ACCEPTED)
-       inspect_accepts(cp_ctx, loc_entry, t_id);
+       inspect_accepts(&cp_ctx->stall_info, loc_entry, t_id);
     if (state == PROPOSED)
-      inspect_proposes(ctx, loc_entry, t_id);
+      inspect_proposes(ctx, &cp_ctx->stall_info, loc_entry, t_id);
 
 
 
     /* =============== RETRY ======================== */
     if (loc_entry->state == RETRY_WITH_BIGGER_TS) {
-      assert(false);
-      take_kv_ptr_with_higher_TS(cp_ctx, loc_entry, false, t_id);
+      take_kv_ptr_with_higher_TS(&cp_ctx->stall_info, loc_entry, false, t_id);
       check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
                                      NEEDS_KV_PTR, MUST_BCAST_COMMITS);
       if (loc_entry->state == PROPOSED) {
@@ -117,8 +115,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 
     /* =============== NEEDS_KV_PTR ======================== */
     if (state == NEEDS_KV_PTR) {
-      assert(false);
-      handle_needs_kv_ptr_state(ctx, loc_entry, sess_i, t_id);
+      handle_needs_kv_ptr_state(ctx, &cp_ctx->stall_info, loc_entry, sess_i, t_id);
     }
 
   }
@@ -266,7 +263,7 @@ static inline bool cp_rmw_rep_recv_handler(context_t* ctx)
 
   bool is_accept = rep_mes->opcode == ACCEPT_REPLY;
   increment_prop_acc_credits(ctx, rep_mes, is_accept);
-  handle_rmw_rep_replies(cp_ctx, rep_mes, is_accept, ctx->t_id);
+  handle_rmw_rep_replies(cp_ctx->prop_info, rep_mes, is_accept, ctx->t_id);
   return true;
 }
 
@@ -345,48 +342,6 @@ static inline void cp_bookkeep_commits(context_t *ctx)
 /* ---------------------------------------------------------------------------
 //------------------------------ COMMITTING-------------------------------------
 //---------------------------------------------------------------------------*/
-
-
-
-static inline void cp_checks_at_loop_start(context_t *ctx)
-{
-  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  //if (ENABLE_ASSERTIONS && CHECK_DBG_COUNTERS)
-  //  check_debug_cntrs(credit_debug_cnt, waiting_dbg_counter, cp_ctx,
-  //                    (void *) cb->dgram_buf, r_buf_pull_ptr,
-  //                    w_buf_pull_ptr, ack_buf_pull_ptr, r_rep_buf_pull_ptr, t_id);
-
-  if (PUT_A_MACHINE_TO_SLEEP && (machine_id == MACHINE_THAT_SLEEPS) &&
-      (t_stats[WORKERS_PER_MACHINE -1].total_reqs > 4000000) && (!cp_ctx->debug_loop->slept)) {
-    uint seconds = 15;
-    if (ctx->t_id == 0) my_printf(yellow, "Workers are going to sleep for %u secs\n", seconds);
-    sleep(seconds); cp_ctx->debug_loop->slept = true;
-    if (ctx->t_id == 0) my_printf(green, "Worker %u is back\n", ctx->t_id);
-  }
-  if (ENABLE_INFO_DUMP_ON_STALL && print_for_debug) {
-    //print_verbouse_debug_info(cp_ctx, t_id, credits);
-  }
-  if (ENABLE_ASSERTIONS) {
-    if (ENABLE_ASSERTIONS && ctx->t_id == 0)  time_approx++;
-    cp_ctx->debug_loop->loop_counter++;
-    if (cp_ctx->debug_loop->loop_counter == M_16) {
-      //if (t_id == 0) print_all_stalled_sessions(cp_ctx, t_id);
-
-      //printf("Wrkr %u is working rectified keys %lu \n",
-      //       t_id, t_stats[t_id].rectified_keys);
-
-//        if (t_id == 0) {
-//          printf("Wrkr %u sleeping machine bit %u, q-reads %lu, "
-//                   "epoch_id %u, reqs %lld failed writes %lu, writes done %lu/%lu \n", t_id,
-//                 conf_bit_vec[MACHINE_THAT_SLEEPS].bit,
-//                 t_stats[t_id].quorum_reads, (uint16_t) epoch_id,
-//                 t_stats[t_id].total_reqs, t_stats[t_id].failed_rem_writes,
-//                 t_stats[t_id].writes_sent, t_stats[t_id].writes_asked_by_clients);
-//        }
-      cp_ctx->debug_loop->loop_counter = 0;
-    }
-  }
-}
 
 
 _Noreturn static void cp_main_loop(context_t *ctx)

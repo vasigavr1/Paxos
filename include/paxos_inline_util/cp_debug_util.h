@@ -12,9 +12,45 @@
 #include "od_network_context.h"
 
 
-/* ---------------------------------------------------------------------------
-//------------------------------DEBUGGING-------------------------------------
-//---------------------------------------------------------------------------*/
+static inline void cp_checks_at_loop_start(context_t *ctx)
+{
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  //if (ENABLE_ASSERTIONS && CHECK_DBG_COUNTERS)
+  //  check_debug_cntrs(credit_debug_cnt, waiting_dbg_counter, cp_ctx,
+  //                    (void *) cb->dgram_buf, r_buf_pull_ptr,
+  //                    w_buf_pull_ptr, ack_buf_pull_ptr, r_rep_buf_pull_ptr, t_id);
+
+  if (PUT_A_MACHINE_TO_SLEEP && (machine_id == MACHINE_THAT_SLEEPS) &&
+      (t_stats[WORKERS_PER_MACHINE -1].total_reqs > 4000000) && (!cp_ctx->debug_loop->slept)) {
+    uint seconds = 15;
+    if (ctx->t_id == 0) my_printf(yellow, "Workers are going to sleep for %u secs\n", seconds);
+    sleep(seconds); cp_ctx->debug_loop->slept = true;
+    if (ctx->t_id == 0) my_printf(green, "Worker %u is back\n", ctx->t_id);
+  }
+  if (ENABLE_INFO_DUMP_ON_STALL && print_for_debug) {
+    //print_verbouse_debug_info(cp_ctx, t_id, credits);
+  }
+  if (ENABLE_ASSERTIONS) {
+    if (ENABLE_ASSERTIONS && ctx->t_id == 0)  time_approx++;
+    cp_ctx->debug_loop->loop_counter++;
+    if (cp_ctx->debug_loop->loop_counter == M_16) {
+      //if (t_id == 0) print_all_stalled_sessions(cp_ctx, t_id);
+
+      //printf("Wrkr %u is working rectified keys %lu \n",
+      //       t_id, t_stats[t_id].rectified_keys);
+
+      //        if (t_id == 0) {
+      //          printf("Wrkr %u sleeping machine bit %u, q-reads %lu, "
+      //                   "epoch_id %u, reqs %lld failed writes %lu, writes done %lu/%lu \n", t_id,
+      //                 conf_bit_vec[MACHINE_THAT_SLEEPS].bit,
+      //                 t_stats[t_id].quorum_reads, (uint16_t) epoch_id,
+      //                 t_stats[t_id].total_reqs, t_stats[t_id].failed_rem_writes,
+      //                 t_stats[t_id].writes_sent, t_stats[t_id].writes_asked_by_clients);
+      //        }
+      cp_ctx->debug_loop->loop_counter = 0;
+    }
+  }
+}
 
 static inline void update_commit_logs(uint16_t t_id, uint32_t bkt, uint32_t log_no, uint8_t *old_value,
                                       uint8_t *value, const char* message, uint8_t flag)
@@ -969,19 +1005,7 @@ static inline void checks_after_failure_to_locally_accept(mica_op_t *kv_ptr,
 }
 
 
-static inline void checks_acting_on_quorum_of_prop_ack(loc_entry_t *loc_entry, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) {
-      assert(loc_entry->rmw_reps.tot_replies >= QUORUM_NUM);
-      assert(loc_entry->rmw_reps.already_accepted >= 0);
-      assert(loc_entry->rmw_reps.seen_higher_prop_acc == 0);
-      assert(glob_ses_id_to_t_id((uint32_t) (loc_entry->rmw_id.id % GLOBAL_SESSION_NUM)) == t_id &&
-             glob_ses_id_to_m_id((uint32_t) (loc_entry->rmw_id.id % GLOBAL_SESSION_NUM)) == machine_id);
 
-    }
-  }
-}
 
 static inline void checks_preliminary_local_accept_help(mica_op_t *kv_ptr,
                                                         loc_entry_t *loc_entry,
@@ -1195,34 +1219,12 @@ static inline void check_state_before_commit_algorithm(mica_op_t *kv_ptr,
         }
       }
     }
-
-
-
   }
 }
 
 //------------------------------HELP STUCK RMW------------------------------------------
 
-static inline void
-checks_and_prints_proposed_but_not_locally_acked(cp_ctx_t *cp_ctx,
-                                                 mica_op_t *kv_ptr,
-                                                 loc_entry_t * loc_entry,
-                                                 uint16_t t_id)
-{
-  if (DEBUG_RMW)
-    my_printf(cyan, "Wrkr %u, session %u helps RMW id %u with version %u, m_id %u,"
-                " kv_ptr log/help log %u/%u kv_ptr committed log %u , "
-                " stashed rmw_id: %u state %u \n",
-              t_id, loc_entry->sess_id, loc_entry->rmw_id.id,
-              loc_entry->new_ts.version, loc_entry->new_ts.m_id,
-              kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
-              loc_entry->help_rmw->rmw_id.id, loc_entry->help_rmw->state);
 
-  if (ENABLE_ASSERTIONS) {
-    assert(cp_ctx->stall_info.stalled);
-    assert(loc_entry->rmw_reps.tot_replies == 0);
-  }
-}
 
 static inline void logging_proposed_but_not_locally_acked(mica_op_t *kv_ptr,
                                                           loc_entry_t * loc_entry,

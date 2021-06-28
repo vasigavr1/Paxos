@@ -11,8 +11,7 @@
 #include "od_latency_util.h"
 #include "cp_main.h"
 #include "cp_debug_util.h"
-#include "cp_paxos_util.h"
-#include "cp_paxos_generic_util.h"
+#include "cp_core_util.h"
 #include "cp_config.h"
 
 //-------------------------------------------------------------------------------------
@@ -31,7 +30,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
                                   mica_op_t *kv_ptr,
                                   uint16_t t_id);
 
-static inline void act_on_quorum_of_commit_acks(cp_ctx_t *cp_ctx,
+static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
                                                 loc_entry_t *loc_entry,
                                                 uint32_t ack_ptr,
                                                 uint16_t t_id);
@@ -288,7 +287,9 @@ static inline void cp_apply_acks(context_t *ctx,
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
-      act_on_quorum_of_commit_acks(cp_ctx, &cp_ctx->prop_info->entry[com_rob->sess_id], ack_ptr, ctx->t_id);
+      act_on_quorum_of_commit_acks(&cp_ctx->stall_info,
+                                   &cp_ctx->prop_info->entry[com_rob->sess_id],
+                                   ack_ptr, ctx->t_id);
       com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);

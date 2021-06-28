@@ -100,6 +100,7 @@ typedef struct rmw_local_entry {
   struct rmw_help_entry *help_rmw;
   struct rmw_local_entry* help_loc_entry;
   uint32_t stalled_reason;
+
 } loc_entry_t;
 
 
