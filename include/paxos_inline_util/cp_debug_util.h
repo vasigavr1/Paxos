@@ -258,11 +258,6 @@ static inline void send_com_checks(context_t *ctx)
     assert(com_mes->coalesce_num == (uint8_t) slot_meta->coalesce_num);
     assert(com_mes->coalesce_num > 0);
     assert(com_mes->m_id == (uint8_t) ctx->m_id);
-    if (ENABLE_COMMITS_WITH_NO_VAL)
-      assert(slot_meta->byte_size ==
-             COM_MES_HEADER + (coalesce_num *  COMMIT_NO_VAL_SIZE));
-    else assert(slot_meta->byte_size ==
-                    COM_MES_HEADER + (coalesce_num *  COM_SIZE));
 
     for (uint8_t i = 0; i < coalesce_num; i++)
     {
@@ -877,7 +872,6 @@ static inline void check_when_rmw_has_committed(mica_op_t *kv_ptr,
     if (rep->opcode == RMW_ID_COMMITTED_SAME_LOG) {
       assert(kv_ptr->last_committed_log_no == log_no);
       assert(kv_ptr->last_committed_rmw_id.id == rmw_id);
-      printf("assert was okay \n");
     }
   }
 

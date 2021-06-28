@@ -470,7 +470,6 @@ static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entr
     com->base_ts.version = loc_entry->log_no;
   }
   else {
-    assert(!ENABLE_COMMITS_WITH_NO_VAL);
     com->opcode = COMMIT_OP;
     com->log_no = loc_entry->log_no;
     com->base_ts.version = loc_entry->base_ts.version;

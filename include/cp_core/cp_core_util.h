@@ -1480,8 +1480,6 @@ static inline void insert_rmw(context_t *ctx,
     }
   }
   else if (loc_entry->state == NEEDS_KV_PTR) {
-    my_printf(yellow, "Sess_id %u key %u \n", loc_entry->sess_id, loc_entry->key.bkt);
-    assert(false);
     if (ENABLE_ALL_ABOARD) loc_entry->all_aboard = false;
   }
   else my_assert(false, "Wrong loc_entry in RMW");

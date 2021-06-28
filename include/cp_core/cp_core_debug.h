@@ -151,7 +151,7 @@ static inline void check_free_session_from_rmw(loc_entry_t* loc_entry,
   if (ENABLE_ASSERTIONS) {
     assert(loc_entry->sess_id < SESSIONS_PER_THREAD);
     assert(loc_entry->state == INVALID_RMW);
-    if(stall_info->stalled[loc_entry->sess_id]) {
+    if(!stall_info->stalled[loc_entry->sess_id]) {
       my_printf(red, "Wrkr %u sess %u should be stalled \n", t_id, loc_entry->sess_id);
       assert(false);
     }
