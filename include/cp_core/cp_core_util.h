@@ -37,26 +37,20 @@ static inline bool is_log_smaller_or_has_rmw_committed(uint32_t log_no, mica_op_
 {
   check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
 
-  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep)) {
+  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
     return true;
-  }
-  else if (kv_ptr->last_committed_log_no >= log_no ||
-           kv_ptr->log_no > log_no) {
-    if (DEBUG_RMW)
-      my_printf(yellow, "Wkrk %u Log number is too small %u/%u entry state %u, propose/accept with rmw_lid %u,"
-                        " \n", t_id, log_no, kv_ptr->last_committed_log_no,
-                kv_ptr->state, rmw_l_id);
+
+  bool is_log_no_smaller = kv_ptr->last_committed_log_no >= log_no ||
+                        kv_ptr->log_no > log_no;
+
+  if (is_log_no_smaller) {
+    print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
     rep->opcode = LOG_TOO_SMALL;
     fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
     return true;
   }
-  else if (DEBUG_RMW) { // remote log is higher than the locally stored!
-    if (kv_ptr->log_no < log_no && log_no > 1 )
-      my_printf(yellow, "Wkrk %u Log number is higher than expected %u/%u, entry state %u, "
-                        "propose/accept with rmw_lid %u\n",
-                t_id, log_no, kv_ptr->log_no,
-                kv_ptr->state, rmw_l_id);
-  }
+
+  print_if_log_is_higher_than_local(log_no, kv_ptr, rmw_l_id, t_id);
   return false;
 }
 
@@ -70,8 +64,10 @@ static inline bool is_log_too_high(uint32_t log_no, mica_op_t *kv_ptr,
   // If the request is for the working log_no, it does not have to equal committed + 1
   // because we may have received an accept for log 10, w/o having committed log 9,
   // then it's okay to process the propose for log 10
-  if (log_no > kv_ptr->log_no &&
-      log_no > kv_ptr->last_committed_log_no + 1) {
+  bool is_log_higher = log_no > kv_ptr->log_no &&
+                       log_no > kv_ptr->last_committed_log_no + 1;
+
+  if (is_log_higher) {
     print_is_log_too_high(log_no, kv_ptr, t_id);
     rep->opcode = LOG_TOO_HIGH;
     return true;

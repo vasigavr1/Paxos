@@ -530,7 +530,7 @@ static inline void check_that_log_is_high_enough(mica_op_t *kv_ptr, uint32_t log
         assert(false);
       }
     } else if (kv_ptr->state != INVALID_RMW)
-      assert(kv_ptr->last_committed_log_no + 1);
+      assert(log_no == kv_ptr->last_committed_log_no + 1);
   }
 }
 

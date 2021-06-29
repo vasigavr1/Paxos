@@ -248,6 +248,32 @@ static inline void check_is_log_too_high(uint32_t log_no, mica_op_t *kv_ptr)
   }
 }
 
+static inline void print_log_too_small(uint32_t log_no,
+                                       mica_op_t *kv_ptr,
+                                       uint64_t rmw_l_id,
+                                       uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(yellow, "Wkrk %u Log number is too small %u/%u entry state %u, propose/accept with rmw_lid %u,"
+                      " \n", t_id, log_no, kv_ptr->last_committed_log_no,
+              kv_ptr->state, rmw_l_id);
+
+}
+
+static inline void print_if_log_is_higher_than_local(uint32_t log_no,
+                                                     mica_op_t *kv_ptr,
+                                                     uint64_t rmw_l_id,
+                                                     uint16_t t_id)
+{
+  if (DEBUG_RMW) { // remote log is higher than the locally stored!
+    if (kv_ptr->log_no < log_no && log_no > 1)
+      my_printf(yellow, "Wkrk %u Log number is higher than expected %u/%u, entry state %u, "
+                        "propose/accept with rmw_lid %u\n",
+                t_id, log_no, kv_ptr->log_no,
+                kv_ptr->state, rmw_l_id);
+  }
+}
+
 static inline void check_search_prop_entries_with_l_id(uint16_t entry)
 {
   if (ENABLE_ASSERTIONS) assert(entry < LOCAL_PROP_NUM);
