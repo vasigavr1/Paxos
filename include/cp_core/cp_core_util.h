@@ -41,7 +41,7 @@ static inline bool is_log_smaller_or_has_rmw_committed(uint32_t log_no, mica_op_
     return true;
 
   bool is_log_no_smaller = kv_ptr->last_committed_log_no >= log_no ||
-                        kv_ptr->log_no > log_no;
+                           kv_ptr->log_no > log_no;
 
   if (is_log_no_smaller) {
     print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
@@ -78,6 +78,34 @@ static inline bool is_log_too_high(uint32_t log_no, mica_op_t *kv_ptr,
   return false;
 }
 
+
+// Returns true if the received log-no is smaller than the committed.
+static inline bool is_log_lower_higher_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
+                                                           uint64_t rmw_l_id,
+                                                           uint16_t t_id,
+                                                           struct rmw_rep_last_committed *rep)
+{
+  //check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
+
+  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
+    return true;
+
+  uint32_t expected_log_no = kv_ptr->last_committed_log_no + 1;
+  if (log_no == expected_log_no)
+    return false;
+  else if (log_no < expected_log_no) {
+    print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
+    rep->opcode = LOG_TOO_SMALL;
+    fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
+  }
+  else { //log_no > expected_log_no
+    print_is_log_too_high(log_no, kv_ptr, t_id);
+    rep->opcode = LOG_TOO_HIGH;
+  }
+  return true;
+}
+
+
 static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
                                            struct propose *prop,
                                            struct rmw_rep_last_committed *rep,
@@ -91,8 +119,6 @@ static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
     rep->ts.m_id = kv_ptr->ts.m_id;
     memcpy(rep->value, kv_ptr->value, (size_t) RMW_VALUE_SIZE);
     return RMW_ACK_BASE_TS_STALE;
-
-
   }
   else return RMW_ACK;
 }
@@ -332,25 +358,25 @@ static inline void create_prop_rep(cp_prop_t *prop,
   prop_rep->l_id = prop->l_id;
   lock_kv_ptr(kv_ptr);
   {
-    if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
-      if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
-        prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
-                                                            prop_rep, prop->log_no, true);
-        // if the propose is going to be acked record its information in the kv_ptr
-        if (prop_rep->opcode == RMW_ACK) {
-          if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
-          activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
-                           prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                           ENABLE_ASSERTIONS ? "received propose" : NULL);
-        }
-        if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
-          prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
-        }
-        if (ENABLE_ASSERTIONS) {
-          assert(kv_ptr->prop_ts.version >= prop->ts.version);
-          check_keys_with_one_trace_op(&prop->key, kv_ptr);
-        }
+    if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
+      //if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
+      prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
+                                                          prop_rep, prop->log_no, true);
+      // if the propose is going to be acked record its information in the kv_ptr
+      if (prop_rep->opcode == RMW_ACK) {
+        if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
+        activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
+                         prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                         ENABLE_ASSERTIONS ? "received propose" : NULL);
       }
+      if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
+        prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
+      }
+      if (ENABLE_ASSERTIONS) {
+        assert(kv_ptr->prop_ts.version >= prop->ts.version);
+        check_keys_with_one_trace_op(&prop->key, kv_ptr);
+      }
+      //}
     }
     if (ENABLE_DEBUG_RMW_KV_PTR) {
       // kv_ptr->dbg->prop_acc_num++;
@@ -380,8 +406,8 @@ static inline void create_acc_rep(cp_acc_t *acc,
 
 
   lock_kv_ptr(kv_ptr);
-  if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
-    if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
+  if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
+    //if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
       acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
       if (acc_rep->opcode == RMW_ACK) {
         activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
@@ -390,7 +416,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
         memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
         kv_ptr->base_acc_ts = acc->base_ts;
       }
-    }
+    //}
   }
   uint64_t number_of_reqs = 0;
 
