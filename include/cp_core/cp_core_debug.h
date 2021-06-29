@@ -479,4 +479,26 @@ static inline void check_state_before_commit_algorithm(mica_op_t *kv_ptr,
 
 
 
+static inline void check_propose_snoops_entry(cp_prop_t *prop,
+                                              mica_op_t *kv_ptr)
+{
+  if (ENABLE_ASSERTIONS)  {
+    assert(prop->opcode == PROPOSE_OP);
+    assert(prop->log_no > kv_ptr->last_committed_log_no);
+    assert(prop->log_no == kv_ptr->log_no);
+    assert(check_entry_validity_with_key(&prop->key, kv_ptr));
+  }
+}
+static inline void check_accept_snoops_entry(cp_acc_t *acc,
+                                             mica_op_t *kv_ptr)
+{
+  if (ENABLE_ASSERTIONS)  {
+    assert(acc->opcode == ACCEPT_OP);
+    assert(acc->log_no > kv_ptr->last_committed_log_no);
+    assert(acc->log_no == kv_ptr->log_no);
+    assert(check_entry_validity_with_key(&acc->key, kv_ptr));
+  }
+}
+
+
 #endif

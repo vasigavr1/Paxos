@@ -138,7 +138,6 @@ typedef struct cp_ctx {
   trace_info_t trace_info;
   trace_op_t *ops;
   loc_entry_t *rmw_entries;
-  //struct prop_info *prop_info;
   sess_stall_t stall_info;
   struct l_ids l_ids;
   cp_debug_t *debug_loop;
