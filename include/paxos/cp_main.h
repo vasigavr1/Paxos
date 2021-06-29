@@ -104,16 +104,6 @@ typedef struct rmw_local_entry {
 } loc_entry_t;
 
 
-// Local state of pending RMWs - one entry per session
-// Accessed with session id!
-struct prop_info {
-  loc_entry_t entry[LOCAL_PROP_NUM];
-  // uint64_t l_id; // highest l_id as of yet -- Starts from 1
-};
-
-
-
-
 
 typedef struct cp_com_rob {
   uint64_t l_id; // for debug
@@ -147,7 +137,8 @@ typedef struct cp_ctx {
   cp_ptrs_to_ops_t *ptrs_to_ops;
   trace_info_t trace_info;
   trace_op_t *ops;
-  struct prop_info *prop_info;
+  loc_entry_t *rmw_entries;
+  //struct prop_info *prop_info;
   sess_stall_t stall_info;
   struct l_ids l_ids;
   cp_debug_t *debug_loop;

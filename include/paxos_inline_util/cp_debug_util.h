@@ -136,10 +136,10 @@ static inline void check_trace_req(cp_ctx_t *cp_ctx, trace_t *trace, trace_op_t 
                                    COMPARE_AND_SWAP_STRONG);
     assert(op->opcode == trace->opcode);
     assert(!cp_ctx->stall_info.stalled[working_session]);
-    if (ENABLE_RMWS && cp_ctx->prop_info->entry[working_session].state != INVALID_RMW) {
+    if (ENABLE_RMWS && cp_ctx->rmw_entries[working_session].state != INVALID_RMW) {
       my_printf(cyan, "wrk %u  Session %u has loc_entry state %u , helping flag %u\n", t_id,
-                working_session, cp_ctx->prop_info->entry[working_session].state,
-                cp_ctx->prop_info->entry[working_session].helping_flag);
+                working_session, cp_ctx->rmw_entries[working_session].state,
+                cp_ctx->rmw_entries[working_session].helping_flag);
       assert(false);
     }
   }
@@ -342,7 +342,7 @@ static inline void print_all_stalled_sessions(cp_ctx_t *cp_ctx, uint16_t t_id)
     uint32_t glob_sess_i = get_glob_sess_id((uint8_t) machine_id, t_id, sess_i);
 
     if (cp_ctx->stall_info.stalled) {
-      loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[sess_i];
+      loc_entry_t *loc_entry = &cp_ctx->rmw_entries[sess_i];
       if (!count) {
         my_printf(yellow, "----------------------------------------\n");
         my_printf(yellow, "WORKER %u STALLED SESSIONS\n", t_id);

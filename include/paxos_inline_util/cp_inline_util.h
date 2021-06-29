@@ -71,7 +71,7 @@ static inline void batch_requests_to_KVS(context_t *ctx)
   t_stats[ctx->t_id].total_reqs += op_i;
   cp_KVS_batch_op_trace(op_i, ops, cp_ctx, ctx->t_id);
   for (uint16_t i = 0; i < op_i; i++) {
-    insert_rmw(ctx, cp_ctx->prop_info, &cp_ctx->stall_info, &ops[i], ctx->t_id);
+    insert_rmw(ctx, cp_ctx->rmw_entries, &cp_ctx->stall_info, &ops[i], ctx->t_id);
   }
 }
 
@@ -85,7 +85,7 @@ static inline void inspect_rmws(context_t *ctx, uint16_t t_id)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   for (uint16_t sess_i = 0; sess_i < SESSIONS_PER_THREAD; sess_i++) {
-    loc_entry_t* loc_entry = &cp_ctx->prop_info->entry[sess_i];
+    loc_entry_t* loc_entry = &cp_ctx->rmw_entries[sess_i];
     uint8_t state = loc_entry->state;
     if (state == INVALID_RMW) continue;
     check_when_inspecting_rmw(loc_entry, &cp_ctx->stall_info, sess_i);
@@ -263,7 +263,7 @@ static inline bool cp_rmw_rep_recv_handler(context_t* ctx)
 
   bool is_accept = rep_mes->opcode == ACCEPT_REPLY;
   increment_prop_acc_credits(ctx, rep_mes, is_accept);
-  handle_rmw_rep_replies(cp_ctx->prop_info, rep_mes, is_accept, ctx->t_id);
+  handle_rmw_rep_replies(cp_ctx->rmw_entries, rep_mes, is_accept, ctx->t_id);
   return true;
 }
 

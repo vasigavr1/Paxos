@@ -285,10 +285,9 @@ cp_debug_t *init_debug_loop_struct()
 
 void cp_init_loc_entry(cp_ctx_t *cp_ctx, uint16_t t_id)
 {
-  cp_ctx->prop_info = (struct prop_info *)malloc(sizeof(struct prop_info));
-  memset(cp_ctx->prop_info, 0, sizeof(struct prop_info));
+  cp_ctx->rmw_entries = calloc(LOCAL_PROP_NUM, sizeof(loc_entry_t));
   for (uint32_t i = 0; i < LOCAL_PROP_NUM; i++) {
-    loc_entry_t *loc_entry = &cp_ctx->prop_info->entry[i];
+    loc_entry_t *loc_entry = &cp_ctx->rmw_entries[i];
     loc_entry->sess_id = (uint16_t) i;
     loc_entry->glob_sess_id = get_glob_sess_id((uint8_t)machine_id, t_id, (uint16_t) i);
     loc_entry->l_id = (uint64_t) loc_entry->sess_id;

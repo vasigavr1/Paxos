@@ -97,12 +97,14 @@ static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
 
 
 // Search in the prepare entries for an lid (used when receiving a prep reply)
-static inline int search_prop_entries_with_l_id(struct prop_info *prop_info,uint8_t state, uint64_t l_id)
+static inline int search_prop_entries_with_l_id(loc_entry_t * loc_entry_array,
+                                                uint8_t state,
+                                                uint64_t l_id)
 {
   uint16_t entry = (uint16_t) (l_id % SESSIONS_PER_THREAD);
   check_search_prop_entries_with_l_id(entry);
-  if (prop_info->entry[entry].state == state &&
-      prop_info->entry[entry].l_id == l_id)
+  if (loc_entry_array[entry].state == state &&
+      loc_entry_array[entry].l_id == l_id)
     return entry;
   return -1; // i.e. l_id not found!!
 
@@ -768,7 +770,7 @@ static inline void handle_prop_or_acc_rep(struct rmw_rep_message *rep_mes,
 
 
 // Handle one accept or propose reply
-static inline void handle_single_rmw_rep(struct prop_info *prop_info, struct rmw_rep_last_committed *rep,
+static inline void handle_single_rmw_rep(loc_entry_t *loc_entry_array, struct rmw_rep_last_committed *rep,
                                          struct rmw_rep_message *rep_mes, uint16_t byte_ptr,
                                          bool is_accept, uint16_t r_rep_i, uint16_t t_id)
 {
@@ -785,15 +787,15 @@ static inline void handle_single_rmw_rep(struct prop_info *prop_info, struct rmw
     //    assert(prop_info->l_id > rep->l_id);
   }
   //my_printf(cyan, "RMW rep opcode %u, l_id %u \n", rep->opcode, rep->l_id);
-  int entry_i = search_prop_entries_with_l_id(prop_info, (uint8_t) (is_accept ? ACCEPTED : PROPOSED),
+  int entry_i = search_prop_entries_with_l_id(loc_entry_array, (uint8_t) (is_accept ? ACCEPTED : PROPOSED),
                                               rep->l_id);
   if (entry_i == -1) return;
-  loc_entry_t *loc_entry = &prop_info->entry[entry_i];
+  loc_entry_t *loc_entry = &loc_entry_array[entry_i];
   handle_prop_or_acc_rep(rep_mes, rep, loc_entry, is_accept, t_id);
 }
 
 // Handle read replies that refer to RMWs (either replies to accepts or proposes)
-static inline void handle_rmw_rep_replies(struct prop_info *prop_info, cp_rmw_rep_mes_t *r_rep_mes,
+static inline void handle_rmw_rep_replies(loc_entry_t *loc_entry_array, cp_rmw_rep_mes_t *r_rep_mes,
                                           bool is_accept, uint16_t t_id)
 {
   struct rmw_rep_message *rep_mes = (struct rmw_rep_message *) r_rep_mes;
@@ -804,7 +806,7 @@ static inline void handle_rmw_rep_replies(struct prop_info *prop_info, cp_rmw_re
   uint16_t byte_ptr = RMW_REP_MES_HEADER; // same for both accepts and replies
   for (uint16_t r_rep_i = 0; r_rep_i < rep_num; r_rep_i++) {
     struct rmw_rep_last_committed *rep = (struct rmw_rep_last_committed *) (((void *) rep_mes) + byte_ptr);
-    handle_single_rmw_rep(prop_info, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
+    handle_single_rmw_rep(loc_entry_array, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
     byte_ptr += get_size_from_opcode(rep->opcode);
   }
   r_rep_mes->opcode = INVALID_OPCODE;
@@ -1433,13 +1435,13 @@ static inline bool inspect_commits(context_t *ctx,
 
 // Insert an RMW in the local RMW structs
 static inline void insert_rmw(context_t *ctx,
-                              struct prop_info *loc_entry_array,
+                              loc_entry_t *loc_entry_array,
                               sess_stall_t *stall_info,
                               trace_op_t *op,
                               uint16_t t_id)
 {
   uint16_t session_id = op->session_id;
-  loc_entry_t *loc_entry = &loc_entry_array->entry[session_id];
+  loc_entry_t *loc_entry = &loc_entry_array[session_id];
   if (loc_entry->state == CAS_FAILED) {
     //printf("Wrkr%u, sess %u, entry %u rmw_failing \n", t_id, session_id, resp->rmw_entry);
     signal_completion_to_client(session_id, op->index_to_req_array, t_id);
