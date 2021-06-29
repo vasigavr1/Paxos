@@ -29,80 +29,51 @@ static inline bool the_rmw_has_committed(mica_op_t *kv_ptr,
   else return false;
 }
 
-// Returns true if the received log-no is smaller than the committed.
-static inline bool is_log_smaller_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
-                                                       uint64_t rmw_l_id,
-                                                       uint16_t t_id,
-                                                       struct rmw_rep_last_committed *rep)
+static inline void log_no_too_low(uint32_t log_no, mica_op_t *kv_ptr,
+                                  uint64_t rmw_l_id,
+                                  uint16_t t_id,
+                                  cp_rmw_rep_t *rep)
+{
+  print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
+  rep->opcode = LOG_TOO_SMALL;
+  fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
+}
+
+static inline void log_no_too_high(uint32_t log_no, mica_op_t *kv_ptr,
+                                  uint16_t t_id,
+                                  cp_rmw_rep_t *rep)
+{
+  print_is_log_too_high(log_no, kv_ptr, t_id);
+  rep->opcode = LOG_TOO_HIGH;
+}
+
+static inline bool is_log_too_low_or_too_high(uint32_t log_no, mica_op_t *kv_ptr,
+                                              uint64_t rmw_l_id,
+                                              uint16_t t_id,
+                                              cp_rmw_rep_t *rep)
+{
+  uint32_t expected_log_no = kv_ptr->last_committed_log_no + 1;
+  if (log_no == expected_log_no)
+    return false;
+  else if (log_no < expected_log_no)
+    log_no_too_low(log_no, kv_ptr, rmw_l_id, t_id, rep);
+  else
+    log_no_too_high(log_no, kv_ptr, t_id, rep);
+
+  return true;
+}
+
+
+static inline bool is_log_lower_higher_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
+                                                           uint64_t rmw_l_id,
+                                                           uint16_t t_id,
+                                                           cp_rmw_rep_t *rep)
 {
   check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
 
   if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
     return true;
-
-  bool is_log_no_smaller = kv_ptr->last_committed_log_no >= log_no ||
-                           kv_ptr->log_no > log_no;
-
-  if (is_log_no_smaller) {
-    print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
-    rep->opcode = LOG_TOO_SMALL;
-    fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
-    return true;
-  }
-
-  print_if_log_is_higher_than_local(log_no, kv_ptr, rmw_l_id, t_id);
-  return false;
-}
-
-
-// Returns true if the received log is higher than the last committed log no + 1
-static inline bool is_log_too_high(uint32_t log_no, mica_op_t *kv_ptr,
-                                   uint16_t t_id,
-                                   struct rmw_rep_last_committed *rep)
-{
-  check_log_nos_of_kv_ptr(kv_ptr, "is_log_too_high", t_id);
-  // If the request is for the working log_no, it does not have to equal committed + 1
-  // because we may have received an accept for log 10, w/o having committed log 9,
-  // then it's okay to process the propose for log 10
-  bool is_log_higher = log_no > kv_ptr->log_no &&
-                       log_no > kv_ptr->last_committed_log_no + 1;
-
-  if (is_log_higher) {
-    print_is_log_too_high(log_no, kv_ptr, t_id);
-    rep->opcode = LOG_TOO_HIGH;
-    return true;
-  }
-  else if (log_no > kv_ptr->last_committed_log_no + 1) {
-    check_is_log_too_high(log_no, kv_ptr);
-  }
-  return false;
-}
-
-
-// Returns true if the received log-no is smaller than the committed.
-static inline bool is_log_lower_higher_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
-                                                           uint64_t rmw_l_id,
-                                                           uint16_t t_id,
-                                                           struct rmw_rep_last_committed *rep)
-{
-  //check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
-
-  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
-    return true;
-
-  uint32_t expected_log_no = kv_ptr->last_committed_log_no + 1;
-  if (log_no == expected_log_no)
-    return false;
-  else if (log_no < expected_log_no) {
-    print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
-    rep->opcode = LOG_TOO_SMALL;
-    fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
-  }
-  else { //log_no > expected_log_no
-    print_is_log_too_high(log_no, kv_ptr, t_id);
-    rep->opcode = LOG_TOO_HIGH;
-  }
-  return true;
+  return is_log_too_low_or_too_high(log_no, kv_ptr, rmw_l_id, t_id, rep);
 }
 
 
@@ -356,7 +327,7 @@ static inline void create_prop_rep(cp_prop_t *prop,
   uint8_t prop_m_id = prop_mes->m_id;
 
   prop_rep->l_id = prop->l_id;
-  lock_kv_ptr(kv_ptr);
+  lock_kv_ptr(kv_ptr, t_id);
   {
     if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
       //if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
@@ -384,7 +355,7 @@ static inline void create_prop_rep(cp_prop_t *prop,
     }
     check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
   }
-  unlock_kv_ptr(kv_ptr);
+  unlock_kv_ptr(kv_ptr, t_id);
   print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
                         prop->ts, kv_ptr, number_of_reqs, false, t_id);
 
@@ -405,7 +376,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
   acc_rep->l_id = acc->l_id;
 
 
-  lock_kv_ptr(kv_ptr);
+  lock_kv_ptr(kv_ptr, t_id);
   if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
     //if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
       acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
@@ -425,7 +396,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
     // number_of_reqs = kv_ptr->dbg->prop_acc_num;
   }
   check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
-  unlock_kv_ptr(kv_ptr);
+  unlock_kv_ptr(kv_ptr, t_id);
   print_log_on_rmw_recv(rmw_l_id, acc_m_id, log_no, acc_rep,
                         acc->ts, kv_ptr, number_of_reqs, true, t_id);
 }
@@ -443,9 +414,9 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
   checks_preliminary_local_accept(kv_ptr, loc_entry, t_id);
 
-  lock_kv_ptr(loc_entry->kv_ptr);
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     return;
   }
 
@@ -461,7 +432,7 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
     kv_ptr->accepted_ts = loc_entry->new_ts;
     kv_ptr->accepted_log_no = kv_ptr->log_no;
     checks_after_local_accept(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     loc_entry->state = ACCEPTED;
   }
   else { // the entry stores a different rmw_id and thus our proposal has been won by another
@@ -470,7 +441,7 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
 
     loc_entry->state = NEEDS_KV_PTR;
     checks_after_failure_to_locally_accept(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
   }
 }
 
@@ -485,7 +456,7 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
   help_loc_entry->new_ts = loc_entry->new_ts;
   checks_preliminary_local_accept_help(kv_ptr, loc_entry, help_loc_entry);
 
-  lock_kv_ptr(loc_entry->kv_ptr);
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
 
   //We don't need to check if the RMW is already registered here -- it's not wrong to do so--
   // but if the RMW has been committed, it will be in the present log_no
@@ -504,12 +475,12 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
     write_kv_ptr_acc_val(kv_ptr, help_loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
     kv_ptr->base_acc_ts = help_loc_entry->base_ts;// the base_ts of the RMW we are helping
     checks_after_local_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     loc_entry->state = ACCEPTED;
   }
   else {
     checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     loc_entry->state = NEEDS_KV_PTR;
     help_loc_entry->state = INVALID_RMW;
   }
@@ -526,7 +497,7 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
 {
   check_inputs_commit_algorithm(kv_ptr, com_info, t_id);
 
-  lock_kv_ptr(kv_ptr);
+  lock_kv_ptr(kv_ptr, t_id);
 
   check_state_before_commit_algorithm(kv_ptr, com_info, t_id);
 
@@ -571,7 +542,7 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
   register_committed_global_sess_id(com_info->rmw_id.id, t_id);
   check_registered_against_kv_ptr_last_committed(kv_ptr, com_info->rmw_id.id,
                                                  com_info->message, t_id);
-  unlock_kv_ptr(kv_ptr);
+  unlock_kv_ptr(kv_ptr, t_id);
 }
 
 
@@ -883,9 +854,9 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
   bool rmw_fails = false;
   uint32_t version = PAXOS_TS;
 
-  lock_kv_ptr(kv_ptr);
+  lock_kv_ptr(kv_ptr, t_id);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     return true;
   }
   if (kv_ptr->state == INVALID_RMW) {
@@ -909,7 +880,7 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
     loc_entry->back_off_cntr = 0;
   }
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_grab_kv_ptr_after_waiting", t_id);
-  unlock_kv_ptr(loc_entry->kv_ptr);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
   if (kv_ptr_was_grabbed) {
     fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, PAXOS_TS,
                                           PROPOSED, sess_i, t_id);
@@ -931,7 +902,7 @@ static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_
   bool help = false;
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
   // The stat of the kv_ptr must not be downgraded from ACCEPTED
-  lock_kv_ptr(loc_entry->kv_ptr);
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
   // check again with the lock in hand
   if (kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw)) {
     loc_entry->log_no = kv_ptr->accepted_log_no;
@@ -950,7 +921,7 @@ static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_
     checks_attempt_to_help_locally_accepted(kv_ptr, loc_entry, t_id);
   }
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_help_a_locally_accepted_value", t_id);
-  unlock_kv_ptr(loc_entry->kv_ptr);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
 
   loc_entry->back_off_cntr = 0;
   if (help) {
@@ -967,9 +938,9 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
                                                       uint16_t sess_i, uint16_t t_id)
 {
   bool kv_ptr_was_grabbed = false;
-  lock_kv_ptr(loc_entry->kv_ptr);
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     return ;
   }
   uint32_t new_version = 0;
@@ -994,7 +965,7 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
   }
   else if (ENABLE_ASSERTIONS) assert(false);
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_steal_a_proposed_kv_ptr", t_id);
-  unlock_kv_ptr(loc_entry->kv_ptr);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
   loc_entry->back_off_cntr = 0;
   if (kv_ptr_was_grabbed) {
     print_after_stealing_proposed(kv_ptr, loc_entry, t_id);
@@ -1084,7 +1055,7 @@ static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
       print_loc_entry(loc_entry, yellow, t_id);
     }
     mica_op_t *kv_ptr = loc_entry->kv_ptr;
-    lock_kv_ptr(kv_ptr);
+    lock_kv_ptr(kv_ptr, t_id);
     if (kv_ptr->last_committed_log_no + 1 == loc_entry->log_no) {
       loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
       loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
@@ -1092,7 +1063,7 @@ static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
       help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
       help_loc_entry->base_ts = kv_ptr->ts;
     }
-    unlock_kv_ptr(loc_entry->kv_ptr);
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
 
     if (unlikely(loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP)) {
       loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
@@ -1179,10 +1150,10 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
   bool rmw_fails = false;
   bool help = false;
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  lock_kv_ptr(kv_ptr);
+  lock_kv_ptr(kv_ptr, t_id);
   {
     if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-      unlock_kv_ptr(loc_entry->kv_ptr);
+      unlock_kv_ptr(loc_entry->kv_ptr, t_id);
       return;
     }
     is_still_proposed = rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
@@ -1245,7 +1216,7 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
     }
     check_log_nos_of_kv_ptr(kv_ptr, "take_kv_ptr_with_higher_TS", t_id);
   }
-  unlock_kv_ptr(loc_entry->kv_ptr);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
 
   if (ENABLE_ASSERTIONS) if (is_still_accepted) assert(help);
   clean_up_after_retrying(stall_info, kv_ptr, loc_entry,

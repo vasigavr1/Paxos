@@ -535,27 +535,7 @@ static inline void check_that_log_is_high_enough(mica_op_t *kv_ptr, uint32_t log
 }
 
 //
-static inline void check_log_nos_of_kv_ptr(mica_op_t *kv_ptr, const char *message, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    if (kv_ptr->state != INVALID_RMW) {
-      if (kv_ptr->last_committed_rmw_id.id == kv_ptr->rmw_id.id) {
-        my_printf(red, "Wrkr %u Last committed rmw id is equal to current, kv_ptr state %u, com log/log %u/%u "
-                    "rmw id %u/%u,  %s \n",
-                  t_id, kv_ptr->state, kv_ptr->last_committed_log_no, kv_ptr->log_no,
-                  kv_ptr->last_committed_rmw_id.id, kv_ptr->rmw_id.id,
-                   message);
-        assert(false);
-      }
 
-      if (kv_ptr->last_committed_log_no >= kv_ptr->log_no) {
-        my_printf(red, "Wrkr %u t_id, kv_ptr state %u, com log/log %u/%u : %s \n",
-                  t_id, kv_ptr->state, kv_ptr->last_committed_log_no, kv_ptr->log_no, message);
-        assert(false);
-      }
-    }
-  }
-}
 
 //
 static inline void check_for_same_ts_as_already_proposed(mica_op_t *kv_ptr, struct propose *prop, uint16_t t_id)
@@ -945,58 +925,10 @@ static inline void checks_before_local_accept(mica_op_t *kv_ptr,
 }
 
 
-static inline void checks_after_local_accept(mica_op_t *kv_ptr,
-                                              loc_entry_t *loc_entry,
-                                              uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->accepted_log_no == loc_entry->log_no);
-    assert(loc_entry->log_no == kv_ptr->last_committed_log_no + 1);
-    assert(compare_ts(&kv_ptr->prop_ts, &kv_ptr->accepted_ts) != SMALLER);
-    kv_ptr->accepted_rmw_id = kv_ptr->rmw_id;
-  }
-  if (ENABLE_DEBUG_RMW_KV_PTR) {
-    //kv_ptr->dbg->proposed_ts = loc_entry->new_ts;
-    //kv_ptr->dbg->proposed_log_no = loc_entry->log_no;
-    //kv_ptr->dbg->proposed_rmw_id = loc_entry->rmw_id;
-  }
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_local_accept and succeed", t_id);
-}
 
 
-static inline void checks_after_failure_to_locally_accept(mica_op_t *kv_ptr,
-                                                          loc_entry_t *loc_entry,
-                                                          uint16_t t_id)
-{
-  if (DEBUG_RMW)
-    my_printf(green, "Wrkr %u failed to get rmw id %u, accepted locally "
-                "kv_ptr rmw id %u, state %u \n",
-              t_id, loc_entry->rmw_id.id,
-              kv_ptr->rmw_id.id, kv_ptr->state);
-  // --CHECKS--
-  if (ENABLE_ASSERTIONS) {
-    if (kv_ptr->state == PROPOSED || kv_ptr->state == ACCEPTED) {
-      if(!(compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == GREATER ||
-           kv_ptr->log_no > loc_entry->log_no)) {
-        my_printf(red, "State: %s,  loc-entry-helping %d, Kv prop/base_ts %u/%u -- loc-entry base_ts %u/%u, "
-                    "kv-log/loc-log %u/%u kv-rmw_id/loc-rmw-id %u/%u\n",
-                  kv_ptr->state == ACCEPTED ? "ACCEPTED" : "PROPOSED",
-                  loc_entry->helping_flag,
-                  kv_ptr->prop_ts.version, kv_ptr->prop_ts.m_id,
-                  loc_entry->new_ts.version, loc_entry->new_ts.m_id,
-                  kv_ptr->log_no, loc_entry->log_no,
-                  kv_ptr->rmw_id.id, loc_entry->rmw_id.id);
-        assert(false);
-      }
-    }
-    else if (kv_ptr->state == INVALID_RMW) // some other rmw committed
-      // with cancelling it is possible for some other RMW to stole and then cancelled itself
-      if (!ENABLE_CAS_CANCELLING) assert(kv_ptr->last_committed_log_no >= loc_entry->log_no);
-  }
 
 
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_local_accept and fail", t_id);
-}
 
 
 
@@ -1051,31 +983,9 @@ static inline void checks_and_prints_local_accept_help(loc_entry_t *loc_entry,
               t_id, help_loc_entry->rmw_id.id);
 }
 
-static inline void checks_after_local_accept_help(mica_op_t *kv_ptr,
-                                                  loc_entry_t *loc_entry,
-                                                  uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(compare_ts(&kv_ptr->prop_ts, &kv_ptr->accepted_ts) != SMALLER);
-    kv_ptr->accepted_rmw_id = kv_ptr->rmw_id;
-    check_log_nos_of_kv_ptr(kv_ptr, "attempt_local_accept_to_help and succeed", t_id);
-  }
-}
 
 
-static inline void checks_after_failure_to_locally_accept_help(mica_op_t *kv_ptr,
-                                                               loc_entry_t *loc_entry,
-                                                               uint16_t t_id)
-{
-  if (DEBUG_RMW)
-    my_printf(green, "Wrkr %u sess %u failed to get rmw id %u, accepted locally "
-                "kv_ptr rmw id %u, state %u \n",
-              t_id, loc_entry->sess_id, loc_entry->rmw_id.id,
-              kv_ptr->rmw_id.id, kv_ptr->state);
 
-
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_local_accept_to_help and fail", t_id);
-}
 
 static inline void checks_acting_on_already_accepted_rep(loc_entry_t *loc_entry, uint16_t t_id)
 {
@@ -1169,52 +1079,7 @@ static inline void check_on_updating_rmw_meta_commit_algorithm(mica_op_t *kv_ptr
   }
 }
 
-static inline void check_state_before_commit_algorithm(mica_op_t *kv_ptr,
-                                                       commit_info_t *com_info,
-                                                       uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    if (com_info->flag == FROM_LOCAL || com_info->flag == FROM_LOCAL_HELP) {
-      // make sure that if we are on the same log
-      if (kv_ptr->log_no == com_info->log_no) {
-        if (!rmw_ids_are_equal(&com_info->rmw_id, &kv_ptr->rmw_id)) {
-          my_printf(red, "kv_ptr is on same log as what is about to be committed but on different rmw-id \n");
-          print_commit_info(com_info, yellow, t_id);
-          print_kv_ptr(kv_ptr, cyan, t_id);
-         // this is a hard error
-          assert(false);
-        }
-        if (kv_ptr->state != INVALID_RMW) {
-          if (kv_ptr->state != ACCEPTED) {
-            my_printf(red, "Committing: Logs are equal, rmw-ids are equal "
-              "but state is not accepted \n");
-            print_commit_info(com_info, yellow, t_id);
-            print_kv_ptr(kv_ptr, cyan, t_id);
-            assert(false);
-          }
-        }
-      }
-      else {
-        // if the log has moved on then the RMW has been helped,
-        // it has been committed in the other machines so there is no need to change its state
-        check_log_nos_of_kv_ptr(kv_ptr, "commit_helped_or_local_from_loc_entry", t_id);
-        if (ENABLE_ASSERTIONS) {
-          if (kv_ptr->state != INVALID_RMW)
-            assert(!rmw_ids_are_equal(&kv_ptr->rmw_id, &com_info->rmw_id));
-        }
-      }
-    }
-    else if (com_info->flag == FROM_REMOTE_COMMIT_NO_VAL) {
-      if (kv_ptr->last_committed_log_no < com_info->log_no) {
-        if (ENABLE_ASSERTIONS) {
-          assert(kv_ptr->state == ACCEPTED);
-          assert(kv_ptr->log_no == com_info->log_no);
-          assert(kv_ptr->accepted_rmw_id.id == com_info->rmw_id.id);
-        }
-      }
-    }
-  }
-}
+
 
 //------------------------------HELP STUCK RMW------------------------------------------
 
