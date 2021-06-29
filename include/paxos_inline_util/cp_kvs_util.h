@@ -28,7 +28,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
                          ALL_ABOARD_TS : PAXOS_TS;
   uint8_t state = (uint8_t) (loc_entry->all_aboard ? ACCEPTED : PROPOSED);
   __builtin_prefetch(loc_entry->compare_val, 0, 0);
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
   {
     check_trace_op_key_vs_kv_ptr(op, kv_ptr);
     check_log_nos_of_kv_ptr(kv_ptr, "KVS_batch_op_trace", t_id);
@@ -54,7 +54,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
     }
   }
   loc_entry->base_ts = kv_ptr->ts;
-  unlock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
 
   loc_entry->kv_ptr = kv_ptr;
   if (ENABLE_ASSERTIONS) {

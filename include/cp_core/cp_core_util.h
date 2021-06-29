@@ -330,7 +330,7 @@ static inline void create_prop_rep(cp_prop_t *prop,
   uint8_t prop_m_id = prop_mes->m_id;
 
   prop_rep->l_id = prop->l_id;
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
   {
     if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
       if (!is_log_too_high(log_no, kv_ptr, t_id, prop_rep)) {
@@ -358,7 +358,7 @@ static inline void create_prop_rep(cp_prop_t *prop,
     }
     check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
   }
-  unlock_seqlock(&kv_ptr->seqlock);
+  unlock_kv_ptr(kv_ptr);
   print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
                         prop->ts, kv_ptr, number_of_reqs, false, t_id);
 
@@ -379,7 +379,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
   acc_rep->l_id = acc->l_id;
 
 
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
   if (!is_log_smaller_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
     if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
       acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
@@ -399,7 +399,7 @@ static inline void create_acc_rep(cp_acc_t *acc,
     // number_of_reqs = kv_ptr->dbg->prop_acc_num;
   }
   check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
-  unlock_seqlock(&kv_ptr->seqlock);
+  unlock_kv_ptr(kv_ptr);
   print_log_on_rmw_recv(rmw_l_id, acc_m_id, log_no, acc_rep,
                         acc->ts, kv_ptr, number_of_reqs, true, t_id);
 }
@@ -417,9 +417,9 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
   checks_preliminary_local_accept(kv_ptr, loc_entry, t_id);
 
-  lock_seqlock(&loc_entry->kv_ptr->seqlock);
+  lock_kv_ptr(loc_entry->kv_ptr);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     return;
   }
 
@@ -435,7 +435,7 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
     kv_ptr->accepted_ts = loc_entry->new_ts;
     kv_ptr->accepted_log_no = kv_ptr->log_no;
     checks_after_local_accept(kv_ptr, loc_entry, t_id);
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     loc_entry->state = ACCEPTED;
   }
   else { // the entry stores a different rmw_id and thus our proposal has been won by another
@@ -444,7 +444,7 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
 
     loc_entry->state = NEEDS_KV_PTR;
     checks_after_failure_to_locally_accept(kv_ptr, loc_entry, t_id);
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
   }
 }
 
@@ -459,7 +459,7 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
   help_loc_entry->new_ts = loc_entry->new_ts;
   checks_preliminary_local_accept_help(kv_ptr, loc_entry, help_loc_entry);
 
-  lock_seqlock(&loc_entry->kv_ptr->seqlock);
+  lock_kv_ptr(loc_entry->kv_ptr);
 
   //We don't need to check if the RMW is already registered here -- it's not wrong to do so--
   // but if the RMW has been committed, it will be in the present log_no
@@ -478,12 +478,12 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
     write_kv_ptr_acc_val(kv_ptr, help_loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
     kv_ptr->base_acc_ts = help_loc_entry->base_ts;// the base_ts of the RMW we are helping
     checks_after_local_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     loc_entry->state = ACCEPTED;
   }
   else {
     checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     loc_entry->state = NEEDS_KV_PTR;
     help_loc_entry->state = INVALID_RMW;
   }
@@ -500,7 +500,7 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
 {
   check_inputs_commit_algorithm(kv_ptr, com_info, t_id);
 
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
 
   check_state_before_commit_algorithm(kv_ptr, com_info, t_id);
 
@@ -545,7 +545,7 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
   register_committed_global_sess_id(com_info->rmw_id.id, t_id);
   check_registered_against_kv_ptr_last_committed(kv_ptr, com_info->rmw_id.id,
                                                  com_info->message, t_id);
-  unlock_seqlock(&kv_ptr->seqlock);
+  unlock_kv_ptr(kv_ptr);
 }
 
 
@@ -857,9 +857,9 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
   bool rmw_fails = false;
   uint32_t version = PAXOS_TS;
 
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     return true;
   }
   if (kv_ptr->state == INVALID_RMW) {
@@ -883,7 +883,7 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
     loc_entry->back_off_cntr = 0;
   }
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_grab_kv_ptr_after_waiting", t_id);
-  unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+  unlock_kv_ptr(loc_entry->kv_ptr);
   if (kv_ptr_was_grabbed) {
     fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, PAXOS_TS,
                                           PROPOSED, sess_i, t_id);
@@ -905,7 +905,7 @@ static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_
   bool help = false;
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
   // The stat of the kv_ptr must not be downgraded from ACCEPTED
-  lock_seqlock(&loc_entry->kv_ptr->seqlock);
+  lock_kv_ptr(loc_entry->kv_ptr);
   // check again with the lock in hand
   if (kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw)) {
     loc_entry->log_no = kv_ptr->accepted_log_no;
@@ -924,7 +924,7 @@ static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_
     checks_attempt_to_help_locally_accepted(kv_ptr, loc_entry, t_id);
   }
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_help_a_locally_accepted_value", t_id);
-  unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+  unlock_kv_ptr(loc_entry->kv_ptr);
 
   loc_entry->back_off_cntr = 0;
   if (help) {
@@ -941,9 +941,9 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
                                                       uint16_t sess_i, uint16_t t_id)
 {
   bool kv_ptr_was_grabbed = false;
-  lock_seqlock(&loc_entry->kv_ptr->seqlock);
+  lock_kv_ptr(loc_entry->kv_ptr);
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
     return ;
   }
   uint32_t new_version = 0;
@@ -968,7 +968,7 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
   }
   else if (ENABLE_ASSERTIONS) assert(false);
   check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_steal_a_proposed_kv_ptr", t_id);
-  unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+  unlock_kv_ptr(loc_entry->kv_ptr);
   loc_entry->back_off_cntr = 0;
   if (kv_ptr_was_grabbed) {
     print_after_stealing_proposed(kv_ptr, loc_entry, t_id);
@@ -1058,7 +1058,7 @@ static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
       print_loc_entry(loc_entry, yellow, t_id);
     }
     mica_op_t *kv_ptr = loc_entry->kv_ptr;
-    lock_seqlock(&kv_ptr->seqlock);
+    lock_kv_ptr(kv_ptr);
     if (kv_ptr->last_committed_log_no + 1 == loc_entry->log_no) {
       loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
       loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
@@ -1066,7 +1066,7 @@ static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
       help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
       help_loc_entry->base_ts = kv_ptr->ts;
     }
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
 
     if (unlikely(loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP)) {
       loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
@@ -1153,10 +1153,10 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
   bool rmw_fails = false;
   bool help = false;
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  lock_seqlock(&kv_ptr->seqlock);
+  lock_kv_ptr(kv_ptr);
   {
     if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-      unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+      unlock_kv_ptr(loc_entry->kv_ptr);
       return;
     }
     is_still_proposed = rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
@@ -1219,7 +1219,7 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
     }
     check_log_nos_of_kv_ptr(kv_ptr, "take_kv_ptr_with_higher_TS", t_id);
   }
-  unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+  unlock_kv_ptr(loc_entry->kv_ptr);
 
   if (ENABLE_ASSERTIONS) if (is_still_accepted) assert(help);
   clean_up_after_retrying(stall_info, kv_ptr, loc_entry,

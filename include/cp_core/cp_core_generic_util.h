@@ -12,6 +12,17 @@
 #include "cp_core_debug.h"
 #include "od_wrkr_side_calls.h"
 
+static inline void lock_kv_ptr(mica_op_t *kv_ptr)
+{
+  lock_seqlock(&kv_ptr->seqlock);
+  check_kv_ptr_invariants(kv_ptr);
+}
+
+static inline void unlock_kv_ptr(mica_op_t *kv_ptr)
+{
+  check_kv_ptr_invariants(kv_ptr);
+  unlock_seqlock(&kv_ptr->seqlock);
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -412,7 +423,7 @@ static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
     //                kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
     //                committed_glob_sess_rmw_id[kv_ptr->rmw_id.glob_sess_id], kv_ptr->rmw_id.glob_sess_id);
 
-    lock_seqlock(&loc_entry->kv_ptr->seqlock);
+    lock_kv_ptr(loc_entry->kv_ptr);
     if (kv_ptr->state == state &&
         kv_ptr->log_no == loc_entry->log_no &&
         rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id)) {
@@ -426,7 +437,7 @@ static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
         if (ENABLE_ASSERTIONS) assert(false);
     }
     check_log_nos_of_kv_ptr(kv_ptr, "free_kv_ptr_if_prop_failed", t_id);
-    unlock_seqlock(&loc_entry->kv_ptr->seqlock);
+    unlock_kv_ptr(loc_entry->kv_ptr);
   }
 }
 
