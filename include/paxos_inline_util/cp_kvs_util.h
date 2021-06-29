@@ -54,7 +54,7 @@ static inline void KVS_from_trace_rmw(trace_op_t *op,
     }
   }
   loc_entry->base_ts = kv_ptr->ts;
-  lock_kv_ptr(kv_ptr);
+  unlock_kv_ptr(kv_ptr);
 
   loc_entry->kv_ptr = kv_ptr;
   if (ENABLE_ASSERTIONS) {
