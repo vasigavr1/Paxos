@@ -11,7 +11,7 @@ static inline void check_kv_ptr_invariants(mica_op_t *kv_ptr)
 {
   if (ENABLE_ASSERTIONS) {
     bool equal_plus_one = kv_ptr->last_committed_log_no + 1 == kv_ptr->log_no;
-    bool equal = kv_ptr->last_committed_log_no + 1 == kv_ptr->log_no;
+    bool equal = kv_ptr->last_committed_log_no == kv_ptr->log_no;
     assert((equal_plus_one) ||
            (equal && kv_ptr->state == INVALID_RMW));
   }
