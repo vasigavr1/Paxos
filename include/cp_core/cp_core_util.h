@@ -298,6 +298,7 @@ static inline uint8_t handle_remote_prop_or_acc_in_kvs(mica_op_t *kv_ptr, void *
                                                        struct rmw_rep_last_committed *rep, uint32_t log_no,
                                                        bool is_prop)
 {
+  assert(log_no == kv_ptr->last_committed_log_no + 1);
   uint8_t flag;
   // if the log number is higher than expected blindly ack
   if (log_no > kv_ptr->log_no) {
