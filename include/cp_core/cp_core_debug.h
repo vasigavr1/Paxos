@@ -7,31 +7,31 @@
 #include "od_debug_util.h"
 #include "od_network_context.h"
 
-static inline void check_rmw_ids_of_kv_ptr(mica_op_t *kv_ptr)
+static inline void check_rmw_ids_of_kv_ptr(mica_op_t *kv_ptr, uint16_t t_id)
 {
-
+  if (ENABLE_ASSERTIONS) {
+    if (kv_ptr->state != INVALID_RMW) {
+      if (kv_ptr->last_committed_rmw_id.id == kv_ptr->rmw_id.id) {
+        my_printf(red, "Wrkr %u Last committed rmw id is equal to current, kv_ptr state %u, com log/log %u/%u "
+                       "rmw id %u/%u,  \n",
+                  t_id, kv_ptr->state, kv_ptr->last_committed_log_no, kv_ptr->log_no,
+                  kv_ptr->last_committed_rmw_id.id, kv_ptr->rmw_id.id);
+        assert(false);
+      }
+    }
+  }
 }
 
 static inline void check_log_nos_of_kv_ptr(mica_op_t *kv_ptr, const char *message, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
-
     bool equal_plus_one = kv_ptr->last_committed_log_no + 1 == kv_ptr->log_no;
     bool equal = kv_ptr->last_committed_log_no == kv_ptr->log_no;
     assert((equal_plus_one) ||
            (equal && kv_ptr->state == INVALID_RMW));
 
     if (kv_ptr->state != INVALID_RMW) {
-      if (kv_ptr->last_committed_rmw_id.id == kv_ptr->rmw_id.id) {
-        my_printf(red, "Wrkr %u Last committed rmw id is equal to current, kv_ptr state %u, com log/log %u/%u "
-                       "rmw id %u/%u,  %s \n",
-                  t_id, kv_ptr->state, kv_ptr->last_committed_log_no, kv_ptr->log_no,
-                  kv_ptr->last_committed_rmw_id.id, kv_ptr->rmw_id.id,
-                  message);
-        assert(false);
-      }
-
-      if (kv_ptr->last_committed_log_no >= kv_ptr->log_no) {
+            if (kv_ptr->last_committed_log_no >= kv_ptr->log_no) {
         my_printf(red, "Wrkr %u t_id, kv_ptr state %u, com log/log %u/%u : %s \n",
                   t_id, kv_ptr->state, kv_ptr->last_committed_log_no, kv_ptr->log_no, message);
         assert(false);
@@ -44,6 +44,7 @@ static inline void check_kv_ptr_invariants(mica_op_t *kv_ptr, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
     check_log_nos_of_kv_ptr(kv_ptr, "check_kv_ptr_invariants", t_id);
+    check_rmw_ids_of_kv_ptr(kv_ptr, t_id);
   }
 }
 
@@ -556,5 +557,28 @@ static inline void check_log_no_on_ack_remote_prop_acc(mica_op_t *kv_ptr,
   }
 }
 
+static inline void check_create_prop_rep(cp_prop_t *prop,
+                                         mica_op_t *kv_ptr)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(kv_ptr->prop_ts.version >= prop->ts.version);
+    check_keys_with_one_trace_op(&prop->key, kv_ptr);
+  }
+}
+
+static inline uint64_t debug_rmw_kv_ptr_create_ptr(mica_op_t *kv_ptr,
+                                                   uint64_t *number_of_reqs)
+{
+  if (ENABLE_DEBUG_RMW_KV_PTR) {
+    // kv_ptr->dbg->prop_acc_num++;
+    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+  }
+}
+
+static inline void print_create_prop_rep(cp_prop_t *prop)
+{
+  //my_printf(cyan, "Received propose with rmw_id %lu \n",
+   //         prop->t_rmw_id);
+}
 
 #endif

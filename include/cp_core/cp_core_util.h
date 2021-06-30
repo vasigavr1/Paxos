@@ -313,51 +313,58 @@ static inline uint8_t handle_remote_prop_or_acc_in_kvs(mica_op_t *kv_ptr, void *
  * --------------------ACCEPTING-------------------------------------
  * --------------------------------------------------------------------------*/
 
+static inline void bookkeeping_if_creating_prop_ack(cp_prop_t *prop,
+                                                    cp_rmw_rep_t *prop_rep,
+                                                    mica_op_t *kv_ptr,
+                                                    uint16_t t_id)
+{
+  // if the propose is going to be acked record its information in the kv_ptr
+  if (prop_rep->opcode == RMW_ACK) {
+    if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
+    activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
+                     prop->ts.m_id, NULL, prop->t_rmw_id, prop->log_no, t_id,
+                     ENABLE_ASSERTIONS ? "received propose" : NULL);
+  }
+  if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
+    prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
+  }
+  check_create_prop_rep(prop, kv_ptr);
+}
+
+static inline void create_prop_rep_after_locking_kv_ptr(cp_prop_t *prop,
+                                                        cp_prop_mes_t *prop_mes,
+                                                        cp_rmw_rep_t *prop_rep,
+                                                        mica_op_t *kv_ptr,
+                                                        uint64_t *number_of_reqs,
+                                                        uint16_t t_id)
+{
+  if (!is_log_lower_higher_or_has_rmw_committed(prop->log_no, kv_ptr,
+                                                prop->t_rmw_id,
+                                                t_id, prop_rep)) {
+    prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_mes->m_id, t_id,
+                                                        prop_rep, prop->log_no, true);
+    bookkeeping_if_creating_prop_ack(prop, prop_rep, kv_ptr, t_id);
+  }
+  debug_rmw_kv_ptr_create_ptr(kv_ptr, number_of_reqs);
+}
+
 static inline void create_prop_rep(cp_prop_t *prop,
                                    cp_prop_mes_t *prop_mes,
                                    cp_rmw_rep_t *prop_rep,
                                    mica_op_t *kv_ptr,
                                    uint16_t t_id)
 {
+  print_create_prop_rep(prop);
   uint64_t number_of_reqs = 0;
-  uint64_t rmw_l_id = prop->t_rmw_id;
-  uint64_t l_id = prop->l_id;
-  //my_printf(cyan, "Received propose with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = prop->log_no;
-  uint8_t prop_m_id = prop_mes->m_id;
 
   prop_rep->l_id = prop->l_id;
   lock_kv_ptr(kv_ptr, t_id);
   {
-    if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, prop_rep)) {
-      prop_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) prop, prop_m_id, t_id,
-                                                          prop_rep, prop->log_no, true);
-      // if the propose is going to be acked record its information in the kv_ptr
-      if (prop_rep->opcode == RMW_ACK) {
-        if (ENABLE_ASSERTIONS) assert(prop->log_no >= kv_ptr->log_no);
-        activate_kv_pair(PROPOSED, prop->ts.version, kv_ptr, prop->opcode,
-                         prop->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                         ENABLE_ASSERTIONS ? "received propose" : NULL);
-      }
-      if (prop_rep->opcode == RMW_ACK || prop_rep->opcode == RMW_ACK_ACC_SAME_RMW) {
-        prop_rep->opcode = is_base_ts_too_small(kv_ptr, prop, prop_rep, t_id);
-      }
-      if (ENABLE_ASSERTIONS) {
-        assert(kv_ptr->prop_ts.version >= prop->ts.version);
-        check_keys_with_one_trace_op(&prop->key, kv_ptr);
-      }
-    }
-    if (ENABLE_DEBUG_RMW_KV_PTR) {
-      // kv_ptr->dbg->prop_acc_num++;
-      // number_of_reqs = kv_ptr->dbg->prop_acc_num;
-    }
-    check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received propose", t_id);
+    create_prop_rep_after_locking_kv_ptr(prop, prop_mes, prop_rep, kv_ptr, &number_of_reqs, t_id);
   }
   unlock_kv_ptr(kv_ptr, t_id);
-  print_log_on_rmw_recv(rmw_l_id, prop_m_id, log_no, prop_rep,
+  print_log_on_rmw_recv(prop->t_rmw_id, prop_mes->m_id, prop->log_no, prop_rep,
                         prop->ts, kv_ptr, number_of_reqs, false, t_id);
-
-
 }
 
 
