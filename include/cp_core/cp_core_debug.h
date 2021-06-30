@@ -7,9 +7,20 @@
 #include "od_debug_util.h"
 #include "od_network_context.h"
 
+static inline void check_rmw_ids_of_kv_ptr(mica_op_t *kv_ptr)
+{
+
+}
+
 static inline void check_log_nos_of_kv_ptr(mica_op_t *kv_ptr, const char *message, uint16_t t_id)
 {
   if (ENABLE_ASSERTIONS) {
+
+    bool equal_plus_one = kv_ptr->last_committed_log_no + 1 == kv_ptr->log_no;
+    bool equal = kv_ptr->last_committed_log_no == kv_ptr->log_no;
+    assert((equal_plus_one) ||
+           (equal && kv_ptr->state == INVALID_RMW));
+
     if (kv_ptr->state != INVALID_RMW) {
       if (kv_ptr->last_committed_rmw_id.id == kv_ptr->rmw_id.id) {
         my_printf(red, "Wrkr %u Last committed rmw id is equal to current, kv_ptr state %u, com log/log %u/%u "
@@ -19,11 +30,6 @@ static inline void check_log_nos_of_kv_ptr(mica_op_t *kv_ptr, const char *messag
                   message);
         assert(false);
       }
-
-      bool equal_plus_one = kv_ptr->last_committed_log_no + 1 == kv_ptr->log_no;
-      bool equal = kv_ptr->last_committed_log_no == kv_ptr->log_no;
-      assert((equal_plus_one) ||
-             (equal && kv_ptr->state == INVALID_RMW));
 
       if (kv_ptr->last_committed_log_no >= kv_ptr->log_no) {
         my_printf(red, "Wrkr %u t_id, kv_ptr state %u, com log/log %u/%u : %s \n",
