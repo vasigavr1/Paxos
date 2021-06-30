@@ -195,9 +195,38 @@ static inline void activate_kv_pair(uint8_t state, uint32_t new_version, mica_op
  * --------------------REMOTE RMW REQUESTS-------------------------------------
  * --------------------------------------------------------------------------*/
 
+static inline uint8_t tell_prop_to_help_lower_acc(cp_prop_t *prop,
+                                                  mica_op_t *kv_ptr,
+                                                  cp_rmw_rep_t *rep)
+{
+  assign_ts_to_netw_ts(&rep->ts, &kv_ptr->accepted_ts);
+  rep->rmw_id = kv_ptr->rmw_id.id;
+  memcpy(rep->value, kv_ptr->last_accepted_value, (size_t) RMW_VALUE_SIZE);
+  rep->log_no_or_base_version = kv_ptr->base_acc_ts.version;
+  rep->base_m_id = kv_ptr->base_acc_ts.m_id;
+  return  SEEN_LOWER_ACC;
+}
+
+
+static inline uint8_t compare_kv_ptr_acc_ts_with_prop_ts(cp_prop_t *prop,
+                                                         mica_op_t *kv_ptr,
+                                                         cp_rmw_rep_t *rep)
+{
+  compare_t acc_ts_comp = compare_netw_ts_with_ts(&prop->ts, &kv_ptr->accepted_ts);
+  if (kv_ptr->state == ACCEPTED && acc_ts_comp == GREATER) {
+    return kv_ptr->rmw_id.id == prop->t_rmw_id ?
+           RMW_ACK_ACC_SAME_RMW :
+           tell_prop_to_help_lower_acc(prop, kv_ptr, rep);
+  }
+  else  return RMW_ACK;
+}
+
 // Look at the kv_ptr to answer to a propose message-- kv pair lock is held when calling this
-static inline uint8_t propose_snoops_entry(cp_prop_t *prop, mica_op_t *kv_ptr, uint8_t m_id,
-                                           uint16_t t_id, struct rmw_rep_last_committed *rep)
+static inline uint8_t propose_snoops_entry(cp_prop_t *prop,
+                                           mica_op_t *kv_ptr,
+                                           uint8_t m_id,
+                                           uint16_t t_id,
+                                           cp_rmw_rep_t *rep)
 {
   check_propose_snoops_entry(prop, kv_ptr);
   uint8_t return_flag;
@@ -205,25 +234,11 @@ static inline uint8_t propose_snoops_entry(cp_prop_t *prop, mica_op_t *kv_ptr, u
 
   if (prop_ts_comp == GREATER) {
     assign_netw_ts_to_ts(&kv_ptr->prop_ts, &prop->ts);
-    compare_t acc_ts_comp = compare_netw_ts_with_ts(&prop->ts, &kv_ptr->accepted_ts);
-    if (kv_ptr->state == ACCEPTED && acc_ts_comp == GREATER) {
-      if (kv_ptr->rmw_id.id == prop->t_rmw_id) {
-        return_flag = RMW_ACK_ACC_SAME_RMW;
-      }
-      else {
-        assign_ts_to_netw_ts(&rep->ts, &kv_ptr->accepted_ts);
-        return_flag = SEEN_LOWER_ACC;
-        rep->rmw_id = kv_ptr->rmw_id.id;
-        memcpy(rep->value, kv_ptr->last_accepted_value, (size_t) RMW_VALUE_SIZE);
-        rep->log_no_or_base_version = kv_ptr->base_acc_ts.version;
-        rep->base_m_id = kv_ptr->base_acc_ts.m_id;
-      }
-    }
-    else return_flag = RMW_ACK;
+    return_flag = compare_kv_ptr_acc_ts_with_prop_ts(prop, kv_ptr, rep);
   }
   else {
-    return_flag = SEEN_HIGHER_PROP;
     assign_ts_to_netw_ts(&rep->ts, &kv_ptr->prop_ts);
+    return_flag = SEEN_HIGHER_PROP;
   }
 
   check_state_with_allowed_flags(5, return_flag, RMW_ACK, RMW_ACK_ACC_SAME_RMW,
@@ -283,16 +298,14 @@ static inline uint8_t handle_remote_prop_or_acc_in_kvs(mica_op_t *kv_ptr, void *
                                                        struct rmw_rep_last_committed *rep, uint32_t log_no,
                                                        bool is_prop)
 {
-  uint8_t flag;
   // if the log number is higher than expected blindly ack
   if (log_no > kv_ptr->log_no) {
-    check_that_log_is_high_enough(kv_ptr, log_no);
-    flag = RMW_ACK;
+    check_log_no_on_ack_remote_prop_acc(kv_ptr, log_no);
+    return RMW_ACK;
   }
   else
-    flag = is_prop ? propose_snoops_entry((cp_prop_t *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep) :
+    return is_prop ? propose_snoops_entry((cp_prop_t *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep) :
            accept_snoops_entry((cp_acc_t *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep);
-  return flag;
 }
 
 

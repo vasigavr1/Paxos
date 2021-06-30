@@ -541,4 +541,14 @@ static inline void print_check_after_accept_snoops_entry(cp_acc_t *acc,
 }
 
 
+static inline void check_log_no_on_ack_remote_prop_acc(mica_op_t *kv_ptr,
+                                                       uint32_t log_no)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(log_no == kv_ptr->last_committed_log_no + 1);
+    assert(kv_ptr->log_no == kv_ptr->last_committed_log_no);
+  }
+}
+
+
 #endif

@@ -518,21 +518,7 @@ static inline void check_loc_entry_metadata_is_reset(loc_entry_t* loc_entry,
 }
 
 
-// When going to ack an accept/propose because the log it refers to is higher than what we are working on
-static inline void check_that_log_is_high_enough(mica_op_t *kv_ptr, uint32_t log_no)
-{
-  if (ENABLE_ASSERTIONS) {
-    assert(log_no > kv_ptr->last_committed_log_no);
-    if (log_no == kv_ptr->last_committed_log_no + 1) {
-      if (kv_ptr->state != INVALID_RMW) {
-        my_printf(red, "Checking_that_log_is to high: log_no %u/%u, kv_ptr committed last_log %u, state %u \n",
-                  log_no, kv_ptr->log_no, kv_ptr->last_committed_log_no, kv_ptr->state);
-        assert(false);
-      }
-    } else if (kv_ptr->state != INVALID_RMW)
-      assert(log_no == kv_ptr->last_committed_log_no + 1);
-  }
-}
+
 
 //
 
