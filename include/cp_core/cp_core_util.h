@@ -411,6 +411,21 @@ static inline void create_acc_rep(cp_acc_t *acc,
  * --------------------RECEIVING REPLY-UTILITY-------------------------------------
  * --------------------------------------------------------------------------*/
 
+static inline void take_kv_ptr_to_acc_state(mica_op_t *kv_ptr,
+                                            loc_entry_t *loc_entry,
+                                            uint16_t t_id)
+{
+  checks_before_local_accept(kv_ptr, loc_entry, t_id);
+
+  kv_ptr->state = ACCEPTED;
+  // calculate the new value depending on the type of RMW
+  perform_the_rmw_on_the_loc_entry(kv_ptr, loc_entry, t_id);
+  //when last_accepted_value is update also update the acc_base_ts
+  kv_ptr->base_acc_ts = kv_ptr->ts;
+  kv_ptr->accepted_ts = loc_entry->new_ts;
+  kv_ptr->accepted_log_no = kv_ptr->log_no;
+  checks_after_local_accept(kv_ptr, loc_entry, t_id);
+}
 
 // After gathering a quorum of proposal acks, check if you can accept locally-- THIS IS STRICTLY LOCAL RMWS -- no helps
 // Every RMW that gets committed must pass through this function successfully (at least one time)
@@ -421,69 +436,57 @@ static inline void attempt_local_accept(loc_entry_t *loc_entry,
   checks_preliminary_local_accept(kv_ptr, loc_entry, t_id);
 
   lock_kv_ptr(loc_entry->kv_ptr, t_id);
+
   if (if_already_committed_bcast_commits(loc_entry, t_id)) {
     unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     return;
   }
 
   if (same_rmw_id_same_ts_and_invalid(kv_ptr, loc_entry)) {
-    checks_before_local_accept(kv_ptr, loc_entry, t_id);
-    //state would be typically proposed, but may also be accepted if someone has helped
-
-    kv_ptr->state = ACCEPTED;
-    // calculate the new value depending on the type of RMW
-    perform_the_rmw_on_the_loc_entry(kv_ptr, loc_entry, t_id);
-    //when last_accepted_value is update also update the acc_base_ts
-    kv_ptr->base_acc_ts = kv_ptr->ts;
-    kv_ptr->accepted_ts = loc_entry->new_ts;
-    kv_ptr->accepted_log_no = kv_ptr->log_no;
-    checks_after_local_accept(kv_ptr, loc_entry, t_id);
+    take_kv_ptr_to_acc_state(kv_ptr, loc_entry, t_id);
     unlock_kv_ptr(loc_entry->kv_ptr, t_id);
     loc_entry->state = ACCEPTED;
   }
   else { // the entry stores a different rmw_id and thus our proposal has been won by another
-    // Some other RMW has won the RMW we are trying to get accepted
-    // If the other RMW has been committed then the last_committed_log_no will be bigger/equal than the current log no
-
-    loc_entry->state = NEEDS_KV_PTR;
+    // Some other RMW has won the kv_ptr we are trying to get accepted
     checks_after_failure_to_locally_accept(kv_ptr, loc_entry, t_id);
     unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+    loc_entry->state = NEEDS_KV_PTR;
   }
+}
+
+static inline void take_local_kv_ptr_to_acc_state_when_helping(mica_op_t *kv_ptr,
+                                                               loc_entry_t *loc_entry,
+                                                               loc_entry_t* help_loc_entry,
+                                                               uint16_t t_id)
+{
+  kv_ptr->state = ACCEPTED;
+  kv_ptr->rmw_id = help_loc_entry->rmw_id;
+  kv_ptr->accepted_ts = help_loc_entry->new_ts;
+  kv_ptr->accepted_log_no = kv_ptr->log_no;
+  write_kv_ptr_acc_val(kv_ptr, help_loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
+  kv_ptr->base_acc_ts = help_loc_entry->base_ts;// the base_ts of the RMW we are helping
+  checks_after_local_accept_help(kv_ptr, loc_entry, t_id);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+  loc_entry->state = ACCEPTED;
 }
 
 // After gathering a quorum of proposal reps, one of them was a lower TS accept, try and help it
 static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
                                                 uint16_t t_id)
 {
-  bool kv_ptr_is_the_same, kv_ptr_is_invalid_but_not_committed,
-      helping_stuck_accept, propose_locally_accepted;
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
   loc_entry_t* help_loc_entry = loc_entry->help_loc_entry;
   help_loc_entry->new_ts = loc_entry->new_ts;
   checks_preliminary_local_accept_help(kv_ptr, loc_entry, help_loc_entry);
 
   lock_kv_ptr(loc_entry->kv_ptr, t_id);
+  comment_on_why_we_dont_check_if_rmw_committed();
 
-  //We don't need to check if the RMW is already registered here -- it's not wrong to do so--
-  // but if the RMW has been committed, it will be in the present log_no
-  // and we will not be able to accept locally anyway.
-
-  find_out_if_can_accept_help_locally(kv_ptr, loc_entry, help_loc_entry, &kv_ptr_is_the_same,
-                                      &kv_ptr_is_invalid_but_not_committed,
-                                      &helping_stuck_accept, &propose_locally_accepted, t_id);
-
-  if (kv_ptr_is_the_same   || kv_ptr_is_invalid_but_not_committed ||
-      helping_stuck_accept || propose_locally_accepted) {
-    kv_ptr->state = ACCEPTED;
-    kv_ptr->rmw_id = help_loc_entry->rmw_id;
-    kv_ptr->accepted_ts = help_loc_entry->new_ts;
-    kv_ptr->accepted_log_no = kv_ptr->log_no;
-    write_kv_ptr_acc_val(kv_ptr, help_loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
-    kv_ptr->base_acc_ts = help_loc_entry->base_ts;// the base_ts of the RMW we are helping
-    checks_after_local_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-    loc_entry->state = ACCEPTED;
-  }
+  bool can_accept_locally = find_out_if_can_accept_help_locally(kv_ptr, loc_entry,
+                                                                help_loc_entry, t_id);
+  if (can_accept_locally)
+    take_local_kv_ptr_to_acc_state_when_helping(kv_ptr, loc_entry, help_loc_entry, t_id);
   else {
     checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
     unlock_kv_ptr(loc_entry->kv_ptr, t_id);

@@ -952,8 +952,9 @@ static inline void checks_and_prints_local_accept_help(loc_entry_t *loc_entry,
     }
     // if the TS are equal it better be that it is because it remembers the proposed request
     if (kv_ptr->state != INVALID_RMW &&
-        compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL && !helping_stuck_accept &&
-        !helping_stuck_accept && !propose_locally_accepted) {
+        compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL &&
+        !helping_stuck_accept &&
+        !propose_locally_accepted) {
       assert(kv_ptr->rmw_id.id == loc_entry->rmw_id.id);
       if (kv_ptr->state != PROPOSED) {
         my_printf(red, "Wrkr: %u, state %u \n", t_id, kv_ptr->state);
@@ -1192,6 +1193,12 @@ static inline void checks_stats_prints_when_sending_acks(context_t *ctx,
 }
 
 
-
+static inline void comment_on_why_we_dont_check_if_rmw_committed()
+{
+  // We don't need to check if the RMW is already registered (committed) in
+  // (attempt_local_accept_to_help)-- it's not wrong to do so--
+  // but if the RMW has been committed, it will be in the present log_no
+  // and we will not be able to accept locally anyway.
+}
 
 #endif //CP_DEBUG_UTIL_H

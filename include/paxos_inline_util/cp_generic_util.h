@@ -382,12 +382,7 @@ static inline void write_kv_if_conditional_on_netw_ts(mica_op_t *kv_ptr, uint8_t
 
 }
 
-static inline bool same_rmw_id_same_ts_and_invalid(mica_op_t *kv_ptr, loc_entry_t *loc_entry)
-{
-  return rmw_ids_are_equal(&loc_entry->rmw_id, &kv_ptr->rmw_id) &&
-         kv_ptr->state != INVALID_RMW &&
-         compare_ts(&loc_entry->new_ts, &kv_ptr->prop_ts) == EQUAL;
-}
+
 
 static inline bool same_rmw_id_same_log_same_ts(mica_op_t *kv_ptr, loc_entry_t *loc_entry)
 {
