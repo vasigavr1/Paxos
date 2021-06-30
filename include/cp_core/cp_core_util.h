@@ -345,7 +345,7 @@ static inline void create_prop_rep_after_locking_kv_ptr(cp_prop_t *prop,
                                                         prop_rep, prop->log_no, true);
     bookkeeping_if_creating_prop_ack(prop, prop_rep, kv_ptr, t_id);
   }
-  debug_rmw_kv_ptr_create_ptr(kv_ptr, number_of_reqs);
+  dbg_kv_ptr_create_acc_prop_rep(kv_ptr, number_of_reqs);
 }
 
 static inline void create_prop_rep(cp_prop_t *prop,
@@ -354,7 +354,6 @@ static inline void create_prop_rep(cp_prop_t *prop,
                                    mica_op_t *kv_ptr,
                                    uint16_t t_id)
 {
-  print_create_prop_rep(prop);
   uint64_t number_of_reqs = 0;
 
   prop_rep->l_id = prop->l_id;
@@ -367,6 +366,29 @@ static inline void create_prop_rep(cp_prop_t *prop,
                         prop->ts, kv_ptr, number_of_reqs, false, t_id);
 }
 
+static inline void create_acc_rep_after_locking_kv_ptr(cp_acc_t *acc,
+                                                       cp_acc_mes_t *acc_mes,
+                                                       cp_rmw_rep_t *acc_rep,
+                                                       mica_op_t *kv_ptr,
+                                                       uint64_t *number_of_reqs,
+                                                       uint16_t t_id)
+{
+  uint64_t rmw_l_id = acc->t_rmw_id;
+  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
+  uint32_t log_no = acc->log_no;
+  uint8_t acc_m_id = acc_mes->m_id;
+  if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
+    acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
+    if (acc_rep->opcode == RMW_ACK) {
+      activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
+                       acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
+                       ENABLE_ASSERTIONS ? "received accept" : NULL);
+      memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
+      kv_ptr->base_acc_ts = acc->base_ts;
+    }
+  }
+  dbg_kv_ptr_create_acc_prop_rep(kv_ptr, number_of_reqs);
+}
 
 static inline void create_acc_rep(cp_acc_t *acc,
                                   cp_acc_mes_t *acc_mes,
@@ -374,35 +396,14 @@ static inline void create_acc_rep(cp_acc_t *acc,
                                   mica_op_t *kv_ptr,
                                   uint16_t t_id)
 {
-  uint64_t rmw_l_id = acc->t_rmw_id;
-  //my_printf(cyan, "Received accept with rmw_id %u, glob_sess %u \n", rmw_l_id, glob_sess_id);
-  uint32_t log_no = acc->log_no;
-  uint8_t acc_m_id = acc_mes->m_id;
-  acc_rep->l_id = acc->l_id;
-
-
-  lock_kv_ptr(kv_ptr, t_id);
-  if (!is_log_lower_higher_or_has_rmw_committed(log_no, kv_ptr, rmw_l_id, t_id, acc_rep)) {
-    //if (!is_log_too_high(log_no, kv_ptr, t_id, acc_rep)) {
-      acc_rep->opcode = handle_remote_prop_or_acc_in_kvs(kv_ptr, (void *) acc, acc_m_id, t_id, acc_rep, log_no, false);
-      if (acc_rep->opcode == RMW_ACK) {
-        activate_kv_pair(ACCEPTED, acc->ts.version, kv_ptr, acc->opcode,
-                         acc->ts.m_id, NULL, rmw_l_id, log_no, t_id,
-                         ENABLE_ASSERTIONS ? "received accept" : NULL);
-        memcpy(kv_ptr->last_accepted_value, acc->value, (size_t) RMW_VALUE_SIZE);
-        kv_ptr->base_acc_ts = acc->base_ts;
-      }
-    //}
-  }
   uint64_t number_of_reqs = 0;
-
-  if (ENABLE_DEBUG_RMW_KV_PTR) {
-    // kv_ptr->dbg->prop_acc_num++;
-    // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+  acc_rep->l_id = acc->l_id;
+  lock_kv_ptr(kv_ptr, t_id);
+  {
+    create_acc_rep_after_locking_kv_ptr(acc, acc_mes, acc_rep, kv_ptr, &number_of_reqs, t_id);
   }
-  check_log_nos_of_kv_ptr(kv_ptr, "Unlocking after received accept", t_id);
   unlock_kv_ptr(kv_ptr, t_id);
-  print_log_on_rmw_recv(rmw_l_id, acc_m_id, log_no, acc_rep,
+  print_log_on_rmw_recv(acc->t_rmw_id, acc_mes->m_id, acc->log_no, acc_rep,
                         acc->ts, kv_ptr, number_of_reqs, true, t_id);
 }
 

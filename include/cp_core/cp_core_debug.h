@@ -566,8 +566,8 @@ static inline void check_create_prop_rep(cp_prop_t *prop,
   }
 }
 
-static inline uint64_t debug_rmw_kv_ptr_create_ptr(mica_op_t *kv_ptr,
-                                                   uint64_t *number_of_reqs)
+static inline uint64_t dbg_kv_ptr_create_acc_prop_rep(mica_op_t *kv_ptr,
+                                                      uint64_t *number_of_reqs)
 {
   if (ENABLE_DEBUG_RMW_KV_PTR) {
     // kv_ptr->dbg->prop_acc_num++;
@@ -575,10 +575,6 @@ static inline uint64_t debug_rmw_kv_ptr_create_ptr(mica_op_t *kv_ptr,
   }
 }
 
-static inline void print_create_prop_rep(cp_prop_t *prop)
-{
-  //my_printf(cyan, "Received propose with rmw_id %lu \n",
-   //         prop->t_rmw_id);
-}
+
 
 #endif
