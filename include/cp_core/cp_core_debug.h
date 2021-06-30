@@ -489,6 +489,9 @@ static inline void check_propose_snoops_entry(cp_prop_t *prop,
     assert(check_entry_validity_with_key(&prop->key, kv_ptr));
   }
 }
+
+
+
 static inline void check_accept_snoops_entry(cp_acc_t *acc,
                                              mica_op_t *kv_ptr)
 {
@@ -498,6 +501,43 @@ static inline void check_accept_snoops_entry(cp_acc_t *acc,
     assert(acc->log_no == kv_ptr->log_no);
     assert(check_entry_validity_with_key(&acc->key, kv_ptr));
   }
+}
+
+static inline void print_accept_snoops_entry(cp_acc_t *acc,
+                                             mica_op_t *kv_ptr,
+                                             compare_t ts_comp,
+                                             uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (DEBUG_RMW && ts_comp == EQUAL && kv_ptr->state == ACCEPTED)
+      my_printf(red, "Wrkr %u Received Accept for the same TS as already accepted, "
+                     "version %u/%u m_id %u/%u, rmw_id %u/%u\n",
+                t_id, acc->ts.version, kv_ptr->prop_ts.version,
+                acc->ts.m_id,
+                kv_ptr->prop_ts.m_id, acc->t_rmw_id,
+                kv_ptr->rmw_id.id);
+  }
+}
+
+static inline void print_check_after_accept_snoops_entry(cp_acc_t *acc,
+                                                         mica_op_t *kv_ptr,
+                                                         cp_rmw_rep_t *rep,
+                                                         uint8_t return_flag,
+                                                         uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(yellow, "Wrkr %u: %s Accept with rmw_id %u, "
+                      "log_no: %u, base_ts.version: %u, ts_m_id %u,"
+                      "locally stored state: %u, "
+                      "locally stored base_ts: version %u, m_id %u \n",
+              t_id, return_flag == RMW_ACK ? "Acks" : "Nacks",
+              acc->t_rmw_id, acc->log_no,
+              acc->ts.version, acc->ts.m_id, kv_ptr->state,
+              kv_ptr->prop_ts.version,
+              kv_ptr->prop_ts.m_id);
+
+  if (ENABLE_ASSERTIONS)
+    assert(return_flag == RMW_ACK || rep->ts.version > 0);
 }
 
 

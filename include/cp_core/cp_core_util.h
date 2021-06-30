@@ -231,52 +231,49 @@ static inline uint8_t propose_snoops_entry(cp_prop_t *prop, mica_op_t *kv_ptr, u
   return return_flag;
 }
 
+static inline uint8_t ack_acc_if_ts_equal_greater(cp_acc_t *acc,
+                                               mica_op_t *kv_ptr,
+                                               compare_t ts_comp,
+                                               uint16_t t_id)
+{
+  print_accept_snoops_entry(acc, kv_ptr, ts_comp, t_id);
+  return RMW_ACK;
+}
+
+static inline uint8_t nack_acc_if_ts_too_low(mica_op_t *kv_ptr,
+                                             cp_rmw_rep_t *rep){
+  check_state_with_allowed_flags(3, kv_ptr->state,
+                                 PROPOSED, ACCEPTED);
+  assign_ts_to_netw_ts(&rep->ts, &kv_ptr->prop_ts);
+  return kv_ptr->state == PROPOSED ?
+         SEEN_HIGHER_PROP : SEEN_HIGHER_ACC;
+
+}
+
+static uint8_t acc_inspects_kv_ts(cp_acc_t *acc,
+                                  mica_op_t *kv_ptr,
+                                  cp_rmw_rep_t *rep,
+                                  uint16_t t_id)
+{
+  // Higher Ts  = Success,  Lower Ts  = Failure
+  compare_t ts_comp = compare_netw_ts_with_ts(&acc->ts, &kv_ptr->prop_ts);
+  // Higher Ts  = Success
+  if (ts_comp == EQUAL || ts_comp == GREATER)
+    return ack_acc_if_ts_equal_greater(acc, kv_ptr, ts_comp, t_id);
+  else if (ts_comp == SMALLER)
+    return nack_acc_if_ts_too_low(kv_ptr, rep);
+  else my_assert(false, "");
+}
 
 // Look at an RMW entry to answer to an accept message-- kv pair lock is held when calling this
 static inline uint8_t accept_snoops_entry(cp_acc_t *acc, mica_op_t *kv_ptr, uint8_t sender_m_id,
-                                          uint16_t t_id, struct rmw_rep_last_committed *rep)
+                                          uint16_t t_id, cp_rmw_rep_t *rep)
 {
   check_accept_snoops_entry(acc, kv_ptr);
-  uint8_t return_flag = RMW_ACK;
+  uint8_t return_flag =  kv_ptr->state == INVALID_RMW ?
+      RMW_ACK : acc_inspects_kv_ts(acc, kv_ptr, rep, t_id);
 
-
-
-  if (kv_ptr->state != INVALID_RMW) {
-    // Higher Ts  = Success,  Lower Ts  = Failure
-    compare_t ts_comp = compare_netw_ts_with_ts(&acc->ts, &kv_ptr->prop_ts);
-    // Higher Ts  = Success
-    if (ts_comp == EQUAL || ts_comp == GREATER) {
-      return_flag = RMW_ACK;
-      if (ENABLE_ASSERTIONS) {
-        if (DEBUG_RMW && ts_comp == EQUAL && kv_ptr->state == ACCEPTED)
-          my_printf(red, "Wrkr %u Received Accept for the same TS as already accepted, "
-                         "version %u/%u m_id %u/%u, rmw_id %u/%u\n",
-                    t_id, acc->ts.version, kv_ptr->prop_ts.version, acc->ts.m_id,
-                    kv_ptr->prop_ts.m_id, acc->t_rmw_id, kv_ptr->rmw_id.id);
-      }
-    }
-    else if (ts_comp == SMALLER) {
-      if (kv_ptr->state == PROPOSED) {
-        return_flag = SEEN_HIGHER_PROP;
-      }
-      else if (kv_ptr->state == ACCEPTED) {
-        return_flag = SEEN_HIGHER_ACC;
-      }
-      else if (ENABLE_ASSERTIONS) assert(false);
-      assign_ts_to_netw_ts(&rep->ts, &kv_ptr->prop_ts);
-    }
-    else if (ENABLE_ASSERTIONS) assert(false);
-  }
-
-  if (DEBUG_RMW)
-    my_printf(yellow, "Wrkr %u: %s Accept with rmw_id %u, log_no: %u, base_ts.version: %u, ts_m_id %u,"
-                      "locally stored state: %u, locally stored base_ts: version %u, m_id %u \n",
-              t_id, return_flag == RMW_ACK ? "Acks" : "Nacks",
-              acc->t_rmw_id, acc->log_no,
-              acc->ts.version, acc->ts.m_id, kv_ptr->state, kv_ptr->prop_ts.version,
-              kv_ptr->prop_ts.m_id);
-
-  if (ENABLE_ASSERTIONS) assert(return_flag == RMW_ACK || rep->ts.version > 0);
+  print_check_after_accept_snoops_entry(acc, kv_ptr, rep, return_flag, t_id);
   return return_flag;
 }
 
@@ -293,8 +290,8 @@ static inline uint8_t handle_remote_prop_or_acc_in_kvs(mica_op_t *kv_ptr, void *
     flag = RMW_ACK;
   }
   else
-    flag = is_prop ? propose_snoops_entry((struct propose *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep) :
-           accept_snoops_entry((struct accept *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep);
+    flag = is_prop ? propose_snoops_entry((cp_prop_t *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep) :
+           accept_snoops_entry((cp_acc_t *) prop_or_acc, kv_ptr, sender_m_id, t_id, rep);
   return flag;
 }
 

@@ -36,7 +36,7 @@ void cp_stats(stats_ctx_t *ctx);
 
 #define ENABLE_COMMITS_WITH_NO_VAL 1
 #define ENABLE_CAS_CANCELLING 0
-#define ENABLE_ALL_ABOARD 1
+#define ENABLE_ALL_ABOARD 0
 
 
 // TIMEOUTS
