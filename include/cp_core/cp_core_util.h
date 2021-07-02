@@ -477,6 +477,7 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
 {
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
   loc_entry_t* help_loc_entry = loc_entry->help_loc_entry;
+
   help_loc_entry->new_ts = loc_entry->new_ts;
   checks_preliminary_local_accept_help(kv_ptr, loc_entry, help_loc_entry);
 
@@ -486,7 +487,8 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
   bool can_accept_locally = find_out_if_can_accept_help_locally(kv_ptr, loc_entry,
                                                                 help_loc_entry, t_id);
   if (can_accept_locally)
-    take_local_kv_ptr_to_acc_state_when_helping(kv_ptr, loc_entry, help_loc_entry, t_id);
+    take_local_kv_ptr_to_acc_state_when_helping(kv_ptr, loc_entry,
+                                                help_loc_entry, t_id);
   else {
     checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
     unlock_kv_ptr(loc_entry->kv_ptr, t_id);
@@ -500,33 +502,33 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
  * --------------------COMMITING-------------------------------------
  * --------------------------------------------------------------------------*/
 
-static inline void commit_algorithm(mica_op_t *kv_ptr,
-                                    commit_info_t *com_info,
-                                    uint16_t t_id)
+// Check if it's a commit without a value -- if it cannot be committed
+// then do not attempt to overwrite the value and timestamp, because the commit's
+// value and ts are stored in the kv_ptr->accepted_value/ts and may have been lost
+static inline void handle_commit_with_no_val (mica_op_t *kv_ptr,
+                                              commit_info_t *com_info,
+                                              uint16_t t_id)
 {
-  check_inputs_commit_algorithm(kv_ptr, com_info, t_id);
-
-  lock_kv_ptr(kv_ptr, t_id);
-
-  check_state_before_commit_algorithm(kv_ptr, com_info, t_id);
-
-  // 0. Check if it's a commit without a value -- if it cannot be committed
-  // then do not attempt to overwrite the value and timestamp, because the commit's
-  // value and ts are stored in the kv_ptr->accepted_value/ts and may have been lost
   if (com_info->no_value) {
     if (!can_process_com_no_value(kv_ptr, com_info, t_id)) {
       com_info->overwrite_kv = false;
     }
   }
+}
 
-
-  // 1. Clear the kv_ptr state and advance its log-no
+static inline void clear_kv_state_advance_log_no (mica_op_t *kv_ptr,
+                                                  commit_info_t *com_info)
+{
   if (kv_ptr->log_no <= com_info->log_no) {
     kv_ptr->log_no = com_info->log_no;
     kv_ptr->state = INVALID_RMW;
   }
+}
 
-  // 2. Apply the value if the carstamp is bigger
+static inline void apply_val_if_carts_bigger(mica_op_t *kv_ptr,
+                                             commit_info_t *com_info,
+                                             uint16_t t_id)
+{
   if (com_info->overwrite_kv) {
     compare_t cart_comp = compare_carts(&com_info->base_ts, com_info->log_no,
                                         &kv_ptr->ts, kv_ptr->last_committed_log_no);
@@ -536,21 +538,43 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
       kv_ptr->ts = com_info->base_ts;
     }
   }
+}
 
-  // 3. Advance the last_committed log_no and rmw_id
+static inline void advance_last_comm_log_no_and_rmw_id(mica_op_t *kv_ptr,
+                                                       commit_info_t *com_info,
+                                                       uint16_t t_id)
+{
   check_on_updating_rmw_meta_commit_algorithm(kv_ptr, com_info, t_id);
   if (kv_ptr->last_committed_log_no < com_info->log_no) {
     kv_ptr->last_committed_log_no = com_info->log_no;
     kv_ptr->last_committed_rmw_id = com_info->rmw_id;
   }
+}
 
+static inline void register_commit(mica_op_t *kv_ptr,
+                                   commit_info_t *com_info,
+                                   uint16_t t_id)
+{
+  register_committed_rmw_id(com_info->rmw_id.id, t_id);
 
-  check_log_nos_of_kv_ptr(kv_ptr, com_info->message, t_id);
-
-  // 4. Unconditionally attempt to register the rmw
-  register_committed_global_sess_id(com_info->rmw_id.id, t_id);
   check_registered_against_kv_ptr_last_committed(kv_ptr, com_info->rmw_id.id,
                                                  com_info->message, t_id);
+}
+
+static inline void commit_algorithm(mica_op_t *kv_ptr,
+                                    commit_info_t *com_info,
+                                    uint16_t t_id)
+{
+  check_inputs_commit_algorithm(kv_ptr, com_info, t_id);
+
+  lock_kv_ptr(kv_ptr, t_id); {
+    check_state_before_commit_algorithm(kv_ptr, com_info, t_id);
+    handle_commit_with_no_val(kv_ptr, com_info, t_id);
+    clear_kv_state_advance_log_no(kv_ptr, com_info);
+    apply_val_if_carts_bigger(kv_ptr, com_info, t_id);
+    advance_last_comm_log_no_and_rmw_id(kv_ptr, com_info, t_id);
+    register_commit(kv_ptr, com_info, t_id);
+  }
   unlock_kv_ptr(kv_ptr, t_id);
 }
 
@@ -618,12 +642,6 @@ static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
 {
   check_act_on_quorum_of_commit_acks(loc_entry);
 
-  if (loc_entry->helping_flag == HELPING &&
-      rmw_ids_are_equal(&loc_entry->help_loc_entry->rmw_id, &loc_entry->rmw_id)) {
-    loc_entry->helping_flag = HELPING_MYSELF;
-    my_printf(red, "Helping myself, but should not\n");
-  }
-
   if (loc_entry->helping_flag != HELP_PREV_COMMITTED_LOG_TOO_HIGH)
     commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, t_id);
 
@@ -632,7 +650,6 @@ static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
   {
     case NOT_HELPING:
     case PROPOSE_NOT_LOCALLY_ACKED:
-    case HELPING_MYSELF: // Deprecated
     case PROPOSE_LOCALLY_ACCEPTED:
       loc_entry->state = INVALID_RMW;
       free_session_from_rmw(loc_entry, stall_info, true, t_id);

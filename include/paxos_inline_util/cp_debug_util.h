@@ -620,28 +620,7 @@ static inline void check_that_the_rmw_ids_match(mica_op_t *kv_ptr, uint64_t rmw_
 }
 
 
-// After registering, make sure the registered is bigger/equal to what is saved as registered
-static inline void check_registered_against_kv_ptr_last_committed(mica_op_t *kv_ptr,
-                                                                  uint64_t committed_id,
-                                                                  const char *message, uint16_t t_id)
-{
-  if (ENABLE_ASSERTIONS) {
-    uint32_t committed_glob_ses_id = (uint32_t)(committed_id % GLOBAL_SESSION_NUM);
-    uint32_t glob_sess_id = (uint32_t)(kv_ptr->last_committed_rmw_id.id % GLOBAL_SESSION_NUM);
-    uint64_t id = kv_ptr->last_committed_rmw_id.id;
-    assert(glob_sess_id < GLOBAL_SESSION_NUM);
-    if (committed_glob_sess_rmw_id[glob_sess_id] < id) {
-      my_printf(yellow, "Committing %s rmw_id: %u glob_sess_id: %u \n", message, committed_id, committed_glob_ses_id);
-      my_printf(red, "Wrkr %u: %s rmw_id: kv_ptr last committed %lu, "
-                  "glob_sess_id :kv_ptr last committed %u,"
-                  "committed_glob_sess_rmw_id %lu,   \n", t_id, message,
-                kv_ptr->last_committed_rmw_id.id,
-                glob_sess_id,
-                committed_glob_sess_rmw_id[glob_sess_id]);
-      //assert(false);
-    }
-  }
-}
+
 
 // Perofrm checks after receiving a rep to commit an RMW
 static inline void check_local_commit_from_rep(mica_op_t *kv_ptr, loc_entry_t *loc_entry,

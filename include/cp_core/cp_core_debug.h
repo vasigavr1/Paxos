@@ -73,13 +73,12 @@ static inline void checks_before_resetting_prop(loc_entry_t *loc_entry)
                                  MUST_BCAST_COMMITS,   //  already-committed, accept attempt found it's already committd
                                  MUST_BCAST_COMMITS_FROM_HELP // log-too-hig timeout
   );
-  check_state_with_allowed_flags(7, (int) loc_entry->helping_flag,
+  check_state_with_allowed_flags(6, (int) loc_entry->helping_flag,
                                  NOT_HELPING,
                                  HELPING,
                                  PROPOSE_NOT_LOCALLY_ACKED,
                                  PROPOSE_LOCALLY_ACCEPTED,
-                                 HELP_PREV_COMMITTED_LOG_TOO_HIGH,
-                                 HELPING_MYSELF);
+                                 HELP_PREV_COMMITTED_LOG_TOO_HIGH);
 }
 static inline void check_after_inspecting_accept(loc_entry_t *loc_entry)
 {
@@ -180,6 +179,10 @@ static inline void check_act_on_quorum_of_commit_acks(loc_entry_t* loc_entry)
   if (ENABLE_ASSERTIONS) {
     assert(loc_entry != NULL);
     assert(loc_entry->state == COMMITTED);
+    if (loc_entry->helping_flag == HELPING &&
+        rmw_ids_are_equal(&loc_entry->help_loc_entry->rmw_id, &loc_entry->rmw_id)) {
+      my_printf(red, "Helping myself, but should not\n");
+    }
   }
 }
 
@@ -572,6 +575,30 @@ static inline uint64_t dbg_kv_ptr_create_acc_prop_rep(mica_op_t *kv_ptr,
   if (ENABLE_DEBUG_RMW_KV_PTR) {
     // kv_ptr->dbg->prop_acc_num++;
     // number_of_reqs = kv_ptr->dbg->prop_acc_num;
+  }
+}
+
+
+// After registering, make sure the registered is bigger/equal to what is saved as registered
+static inline void check_registered_against_kv_ptr_last_committed(mica_op_t *kv_ptr,
+                                                                  uint64_t committed_id,
+                                                                  const char *message, uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    uint32_t committed_glob_ses_id = (uint32_t)(committed_id % GLOBAL_SESSION_NUM);
+    uint32_t glob_sess_id = (uint32_t)(kv_ptr->last_committed_rmw_id.id % GLOBAL_SESSION_NUM);
+    uint64_t id = kv_ptr->last_committed_rmw_id.id;
+    assert(glob_sess_id < GLOBAL_SESSION_NUM);
+    if (committed_glob_sess_rmw_id[glob_sess_id] < id) {
+      my_printf(yellow, "Committing %s rmw_id: %u glob_sess_id: %u \n", message, committed_id, committed_glob_ses_id);
+      my_printf(red, "Wrkr %u: %s rmw_id: kv_ptr last committed %lu, "
+                     "glob_sess_id :kv_ptr last committed %u,"
+                     "committed_glob_sess_rmw_id %lu,   \n", t_id, message,
+                kv_ptr->last_committed_rmw_id.id,
+                glob_sess_id,
+                committed_glob_sess_rmw_id[glob_sess_id]);
+      //assert(false);
+    }
   }
 }
 

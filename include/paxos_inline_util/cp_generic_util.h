@@ -95,8 +95,6 @@ static inline const char* help_state_to_str(uint8_t state)
       return "PROPOSE_LOCALLY_ACCEPTED";
     case HELP_PREV_COMMITTED_LOG_TOO_HIGH:
       return "HELP_PREV_COMMITTED_LOG_TOO_HIGH";
-    case HELPING_MYSELF:
-      return "HELPING_MYSELF";
     case IS_HELPER:
       return "IS_HELPER";
     default: return "Unknown";

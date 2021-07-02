@@ -144,7 +144,6 @@ enum {
   HELPING, // HELP to avoid deadlocks: The RMW metadata need not been stashed, because the help_loc_entry is in use
   PROPOSE_LOCALLY_ACCEPTED, // Denotes that we are sending proposes for a locally accepted rmw
   HELP_PREV_COMMITTED_LOG_TOO_HIGH,
-  HELPING_MYSELF,
   IS_HELPER
 };
 

@@ -131,7 +131,8 @@ static inline void local_rmw_ack(loc_entry_t *loc_entry)
 
 
 // when committing register global_sess id as committed
-static inline void register_committed_global_sess_id (uint64_t rmw_id, uint16_t t_id)
+static inline void register_committed_rmw_id (uint64_t rmw_id,
+                                              uint16_t t_id)
 {
   uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
   uint64_t tmp_rmw_id, debug_cntr = 0;
@@ -146,8 +147,10 @@ static inline void register_committed_global_sess_id (uint64_t rmw_id, uint16_t 
       }
     }
     if (rmw_id <= tmp_rmw_id) return;
-  } while (!atomic_compare_exchange_strong(&committed_glob_sess_rmw_id[glob_sess_id], &tmp_rmw_id, rmw_id));
-  MY_ASSERT(rmw_id <= committed_glob_sess_rmw_id[glob_sess_id], "After registering: rmw_id/registered %u/%u glob sess_id %u \n",
+  } while (!atomic_compare_exchange_strong(&committed_glob_sess_rmw_id[glob_sess_id],
+                                           &tmp_rmw_id, rmw_id));
+  MY_ASSERT(rmw_id <= committed_glob_sess_rmw_id[glob_sess_id],
+            "After registering: rmw_id/registered %u/%u glob sess_id %u \n",
             rmw_id, committed_glob_sess_rmw_id[glob_sess_id], glob_sess_id);
 }
 
@@ -264,7 +267,7 @@ static inline void fill_commit_info(commit_info_t *com_info, uint8_t flag,
                                     uint32_t log_no, ts_tuple_t base_ts,
                                     uint8_t *value, bool overwrite_kv)
 {
-  //if (ENABLE_ASSERTIONS) assert(log_no > 0);
+  if (ENABLE_ASSERTIONS) assert(log_no > 0);
   com_info->rmw_id.id = rmw_id;
   com_info->log_no = log_no;
   com_info->base_ts = base_ts;
