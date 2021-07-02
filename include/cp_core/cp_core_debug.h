@@ -692,9 +692,31 @@ static inline void check_handle_rmw_rep_end(loc_entry_t* loc_entry,
 
 }
 
-//static inline void check_()
-//{}
-//
+static inline void check_find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_array,
+                                                       cp_rmw_rep_t *rep,
+                                                       cp_rmw_rep_mes_t *rep_mes,
+                                                       uint16_t byte_ptr,
+                                                       bool is_accept,
+                                                       uint16_t r_rep_i,
+                                                       uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(loc_entry_array != NULL);
+    if (!opcode_is_rmw_rep(rep->opcode)) {
+      printf("Rep_i %u, current opcode %u first opcode: %u, byte_ptr %u \n",
+             r_rep_i, rep->opcode, rep_mes->rmw_rep[0].opcode, byte_ptr);
+    }
+    assert(opcode_is_rmw_rep(rep->opcode));
+    //    if (prop_info->l_id <= rep->l_id)
+    //      my_printf(red, "Wrkr %u, rep_i %u, opcode %u, is_accept %d, incoming rep l_id %u, max prop lid %u \n",
+    //                t_id, r_rep_i, rep->opcode, is_accept, rep->l_id, prop_info->l_id);
+    //
+    //    assert(prop_info->l_id > rep->l_id);
+  }
+  //my_printf(cyan, "RMW rep opcode %u, l_id %u \n", rep->opcode, rep->l_id);
+
+}
+
 //static inline void check_()
 //{}
 //

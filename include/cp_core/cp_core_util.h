@@ -766,19 +766,13 @@ static inline void handle_rmw_rep_log_too_high(rmw_rep_info_t *rep_info)
   rep_info->log_too_high++;
 }
 
-
-// Handle a proposal/accept reply
-static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
-                                          cp_rmw_rep_t *rep,
-                                          loc_entry_t *loc_entry,
-                                          bool is_accept,
-                                          const uint16_t t_id)
+static inline void handle_rmw_rep_based_on_opcode(cp_rmw_rep_mes_t *rep_mes,
+                                                  loc_entry_t *loc_entry,
+                                                  cp_rmw_rep_t *rep,
+                                                  rmw_rep_info_t *rep_info,
+                                                  bool is_accept,
+                                                  const uint16_t t_id)
 {
-
-  rmw_rep_info_t *rep_info = &loc_entry->rmw_reps;
-  checks_when_handling_prop_acc_rep(loc_entry, rep, is_accept, t_id);
-  bookkeeping_for_rep_info(rep_info, rep);
-
   switch (rep->opcode) {
     case RMW_ACK_BASE_TS_STALE:
     case RMW_ACK:
@@ -804,29 +798,35 @@ static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
       break;
     default: my_assert(false, "");
   }
+}
 
+// Handle a proposal/accept reply
+static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
+                                          cp_rmw_rep_t *rep,
+                                          loc_entry_t *loc_entry,
+                                          bool is_accept,
+                                          const uint16_t t_id)
+{
+  rmw_rep_info_t *rep_info = &loc_entry->rmw_reps;
+  checks_when_handling_prop_acc_rep(loc_entry, rep, is_accept, t_id);
+  bookkeeping_for_rep_info(rep_info, rep);
+  handle_rmw_rep_based_on_opcode(rep_mes, loc_entry, rep, rep_info, is_accept, t_id);
   check_handle_rmw_rep_end(loc_entry, is_accept);
 }
 
 
 // Handle one accept or propose reply
-static inline void handle_single_rmw_rep(loc_entry_t *loc_entry_array, struct rmw_rep_last_committed *rep,
-                                         struct rmw_rep_message *rep_mes, uint16_t byte_ptr,
-                                         bool is_accept, uint16_t r_rep_i, uint16_t t_id)
+static inline void find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_array,
+                                                 cp_rmw_rep_t *rep,
+                                                 cp_rmw_rep_mes_t *rep_mes,
+                                                 uint16_t byte_ptr,
+                                                 bool is_accept,
+                                                 uint16_t r_rep_i,
+                                                 uint16_t t_id)
 {
-  if (ENABLE_ASSERTIONS) {
-    if (!opcode_is_rmw_rep(rep->opcode)) {
-      printf("Rep_i %u, current opcode %u first opcode: %u, byte_ptr %u \n",
-             r_rep_i, rep->opcode, rep_mes->rmw_rep[0].opcode, byte_ptr);
-    }
-    assert(opcode_is_rmw_rep(rep->opcode));
-    //    if (prop_info->l_id <= rep->l_id)
-    //      my_printf(red, "Wrkr %u, rep_i %u, opcode %u, is_accept %d, incoming rep l_id %u, max prop lid %u \n",
-    //                t_id, r_rep_i, rep->opcode, is_accept, rep->l_id, prop_info->l_id);
-    //
-    //    assert(prop_info->l_id > rep->l_id);
-  }
-  //my_printf(cyan, "RMW rep opcode %u, l_id %u \n", rep->opcode, rep->l_id);
+  check_find_local_and_handle_rmw_rep(loc_entry_array, rep, rep_mes,
+                                      byte_ptr, is_accept, r_rep_i, t_id);
+
   int entry_i = search_prop_entries_with_l_id(loc_entry_array, (uint8_t) (is_accept ? ACCEPTED : PROPOSED),
                                               rep->l_id);
   if (entry_i == -1) return;
@@ -838,7 +838,7 @@ static inline void handle_single_rmw_rep(loc_entry_t *loc_entry_array, struct rm
 static inline void handle_rmw_rep_replies(loc_entry_t *loc_entry_array, cp_rmw_rep_mes_t *r_rep_mes,
                                           bool is_accept, uint16_t t_id)
 {
-  struct rmw_rep_message *rep_mes = (struct rmw_rep_message *) r_rep_mes;
+  cp_rmw_rep_mes_t *rep_mes = (cp_rmw_rep_mes_t *) r_rep_mes;
   check_state_with_allowed_flags(4, r_rep_mes->opcode, ACCEPT_REPLY,
                                  PROP_REPLY, ACCEPT_REPLY_NO_CREDITS);
   uint8_t rep_num = rep_mes->coalesce_num;
@@ -846,7 +846,7 @@ static inline void handle_rmw_rep_replies(loc_entry_t *loc_entry_array, cp_rmw_r
   uint16_t byte_ptr = RMW_REP_MES_HEADER; // same for both accepts and replies
   for (uint16_t r_rep_i = 0; r_rep_i < rep_num; r_rep_i++) {
     struct rmw_rep_last_committed *rep = (struct rmw_rep_last_committed *) (((void *) rep_mes) + byte_ptr);
-    handle_single_rmw_rep(loc_entry_array, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
+    find_local_and_handle_rmw_rep(loc_entry_array, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
     byte_ptr += get_size_from_opcode(rep->opcode);
   }
   r_rep_mes->opcode = INVALID_OPCODE;
