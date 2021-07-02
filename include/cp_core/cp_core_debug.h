@@ -609,4 +609,111 @@ static inline void check_fill_com_info(uint32_t log_no)
 
 
 
+static inline void comment_on_why_we_dont_check_if_rmw_committed()
+{
+  // We don't need to check if the RMW is already registered (committed) in
+  // (attempt_local_accept_to_help)-- it's not wrong to do so--
+  // but if the RMW has been committed, it will be in the present log_no
+  // and we will not be able to accept locally anyway.
+}
+
+static inline void check_store_rmw_rep_to_help_loc_entry(loc_entry_t* loc_entry,
+                                                         cp_rmw_rep_t* prop_rep,
+                                                         compare_t ts_comp)
+{
+  if (ENABLE_ASSERTIONS) {
+    loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+    if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) {
+      assert(help_loc_entry->new_ts.version > 0);
+      assert(help_loc_entry->state == ACCEPTED);
+      assert(ts_comp != EQUAL); // It would have been an SAME_ACC_ACK
+    }
+    assert(help_loc_entry->state == INVALID_RMW || help_loc_entry->state == ACCEPTED);
+  }
+}
+
+static inline void check_handle_prop_or_acc_rep_ack(cp_rmw_rep_mes_t *rep_mes,
+                                                    rmw_rep_info_t *rep_info,
+                                                    bool is_accept,
+                                                    uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS)
+    assert(rep_mes->m_id < MACHINE_NUM && rep_mes->m_id != machine_id);
+  if (DEBUG_RMW)
+    my_printf(green, "Wrkr %u, the received rep is an %s ack, "
+                     "total acks %u \n", t_id, is_accept ? "acc" : "prop",
+              rep_info->acks);
+}
+
+static inline void check_handle_rmw_rep_seen_lower_acc(loc_entry_t* loc_entry,
+                                                       cp_rmw_rep_t *rep,
+                                                       bool is_accept)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(compare_netw_ts_with_ts(&rep->ts, &loc_entry->new_ts) == SMALLER);
+    assert(!is_accept);
+  }
+}
+
+
+static inline void print_handle_rmw_rep_seen_higher(cp_rmw_rep_t *rep,
+                                                    rmw_rep_info_t *rep_info,
+                                                    bool is_accept,
+                                                    uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(yellow, "Wrkr %u: the %s rep is %u, %u sum of all other reps %u \n", t_id,
+              is_accept ? "acc" : "prop",rep->opcode,
+              rep_info->seen_higher_prop_acc,
+              rep_info->rmw_id_commited + rep_info->log_too_small +
+              rep_info->already_accepted);
+
+}
+
+
+static inline void print_handle_rmw_rep_higher_ts(rmw_rep_info_t *rep_info,
+                                                  uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(yellow, "Wrkr %u: overwriting the TS version %u \n",
+              t_id, rep_info->seen_higher_prop_version);
+
+}
+
+
+static inline void check_handle_rmw_rep_end(loc_entry_t* loc_entry,
+                                            bool is_accept)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (is_accept) assert(loc_entry->state == ACCEPTED);
+    if (!is_accept) assert(loc_entry->state == PROPOSED);
+    check_sum_of_reps(loc_entry);
+  }
+
+}
+
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+//
+//static inline void check_()
+//{}
+
 #endif

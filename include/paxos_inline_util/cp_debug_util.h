@@ -1172,12 +1172,7 @@ static inline void checks_stats_prints_when_sending_acks(context_t *ctx,
 }
 
 
-static inline void comment_on_why_we_dont_check_if_rmw_committed()
-{
-  // We don't need to check if the RMW is already registered (committed) in
-  // (attempt_local_accept_to_help)-- it's not wrong to do so--
-  // but if the RMW has been committed, it will be in the present log_no
-  // and we will not be able to accept locally anyway.
-}
+
+
 
 #endif //CP_DEBUG_UTIL_H

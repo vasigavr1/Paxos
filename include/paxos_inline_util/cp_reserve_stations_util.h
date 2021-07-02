@@ -17,23 +17,7 @@
 //-------------------------------------------------------------------------------------
 // -------------------------------FORWARD DECLARATIONS--------------------------------
 //-------------------------------------------------------------------------------------
-static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entry_t *loc_entry,
-                                                    uint8_t broadcast_state, uint16_t t_id);
-static inline void create_prop_rep(cp_prop_t *,
-                                   cp_prop_mes_t *prop_mes,
-                                   cp_rmw_rep_t *,
-                                   mica_op_t *,
-                                   uint16_t t_id);
-static inline void create_acc_rep(cp_acc_t *acc,
-                                  cp_acc_mes_t *acc_mes,
-                                  cp_rmw_rep_t *acc_rep,
-                                  mica_op_t *kv_ptr,
-                                  uint16_t t_id);
 
-static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
-                                                loc_entry_t *loc_entry,
-                                                uint32_t ack_ptr,
-                                                uint16_t t_id);
 
 
 // Fill the trace_op to be passed to the KVS. Returns whether no more requests can be processed
@@ -289,7 +273,7 @@ static inline void cp_apply_acks(context_t *ctx,
     if (com_rob->acks_seen == REMOTE_QUORUM) {
       act_on_quorum_of_commit_acks(&cp_ctx->stall_info,
                                    &cp_ctx->rmw_entries[com_rob->sess_id],
-                                   ack_ptr, ctx->t_id);
+                                   ctx->t_id);
       com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);

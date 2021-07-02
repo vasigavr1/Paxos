@@ -616,19 +616,10 @@ static inline void commit_rmw(mica_op_t *kv_ptr,
 }
 
 
-
-// On gathering quorum of acks for commit, commit locally and signal that the session must be freed if not helping
-static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
-                                                loc_entry_t *loc_entry,
-                                                uint32_t ack_ptr,
-                                                uint16_t t_id)
+static inline void free_session_and_reinstate_loc_entry(sess_stall_t *stall_info,
+                                                        loc_entry_t *loc_entry,
+                                                        uint16_t t_id)
 {
-  check_act_on_quorum_of_commit_acks(loc_entry);
-
-  if (loc_entry->helping_flag != HELP_PREV_COMMITTED_LOG_TOO_HIGH)
-    commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, t_id);
-
-
   switch(loc_entry->helping_flag)
   {
     case NOT_HELPING:
@@ -641,14 +632,24 @@ static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
       reinstate_loc_entry_after_helping(loc_entry, t_id);
       break;
     case HELP_PREV_COMMITTED_LOG_TOO_HIGH:
-      //if (loc_entry->helping_flag == HELP_PREV_COMMITTED_LOG_TOO_HIGH)
-      //  my_printf(yellow, "Wrkr %u, sess %u, rmw-id %u, sess stalled %d \n",
-      //  t_id, loc_entry->sess_id, loc_entry->rmw_id.id, sess_info->stalled[loc_entry->sess_id]);
       loc_entry->state = RETRY_WITH_BIGGER_TS;
       loc_entry->helping_flag = NOT_HELPING;
       break;
-    default: if (ENABLE_ASSERTIONS) assert(false);
+    default: my_assert(false, "");
   }
+}
+
+// On gathering quorum of acks for commit, commit locally and signal that the session must be freed if not helping
+static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
+                                                loc_entry_t *loc_entry,
+                                                uint16_t t_id)
+{
+  check_act_on_quorum_of_commit_acks(loc_entry);
+
+  if (loc_entry->helping_flag != HELP_PREV_COMMITTED_LOG_TOO_HIGH)
+    commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, t_id);
+
+  free_session_and_reinstate_loc_entry(stall_info, loc_entry,t_id);
 }
 
 
@@ -658,19 +659,13 @@ static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
  * --------------------------------------------------------------------------*/
 
 // The help_loc_entry is used when receiving an already committed reply or an already accepted
-static inline void store_rmw_rep_to_help_loc_entry(loc_entry_t* loc_entry,
-                                                   struct rmw_rep_last_committed* prop_rep, uint16_t t_id)
+static inline void store_rmw_rep_in_help_loc_entry(loc_entry_t* loc_entry,
+                                                   cp_rmw_rep_t* prop_rep,
+                                                   uint16_t t_id)
 {
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
   compare_t ts_comp = compare_netw_ts_with_ts(&prop_rep->ts, &help_loc_entry->new_ts);
-  if (ENABLE_ASSERTIONS) {
-    if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) {
-      assert(help_loc_entry->new_ts.version > 0);
-      assert(help_loc_entry->state == ACCEPTED);
-      assert(ts_comp != EQUAL); // It would have been an SAME_ACC_ACK
-    }
-    assert(help_loc_entry->state == INVALID_RMW || help_loc_entry->state == ACCEPTED);
-  }
+  check_store_rmw_rep_to_help_loc_entry(loc_entry, prop_rep, ts_comp);
 
   if (help_loc_entry->state == INVALID_RMW ||
       ts_comp == GREATER) {
@@ -686,10 +681,93 @@ static inline void store_rmw_rep_to_help_loc_entry(loc_entry_t* loc_entry,
   }
 }
 
+static inline void bookkeeping_for_rep_info(rmw_rep_info_t *rep_info,
+                                            cp_rmw_rep_t *rep)
+{
+  rep_info->tot_replies++;
+  if (rep_info->tot_replies >= QUORUM_NUM) {
+    rep_info->ready_to_inspect = true;
+  }
+  if (rep->opcode > RMW_ACK_BASE_TS_STALE) rep_info->nacks++;
+}
+
+static inline void handle_rmw_rep_ack(cp_rmw_rep_mes_t *rep_mes,
+                                      cp_rmw_rep_t *rep,
+                                      loc_entry_t *loc_entry,
+                                      rmw_rep_info_t *rep_info,
+                                      bool is_accept,
+                                      const uint16_t t_id)
+{
+  if (rep->opcode == RMW_ACK_BASE_TS_STALE) {
+    write_kv_if_conditional_on_netw_ts(loc_entry->kv_ptr, rep->value,
+                                       (size_t) VALUE_SIZE, FROM_BASE_TS_STALE, rep->ts);
+    assign_netw_ts_to_ts(&loc_entry->base_ts, &rep->ts);
+  }
+  loc_entry->base_ts_found = true;
+  rep_info->acks++;
+  check_handle_prop_or_acc_rep_ack(rep_mes, rep_info, is_accept, t_id);
+}
+
+static inline void handle_rmw_rep_rmw_id_committed(loc_entry_t *loc_entry,
+                                                   cp_rmw_rep_t *rep,
+                                                   rmw_rep_info_t *rep_info,
+                                                   const uint16_t t_id)
+{
+  if (rep->opcode == RMW_ID_COMMITTED)
+    rep_info->no_need_to_bcast = true;
+  rep_info->ready_to_inspect = true;
+  rep_info->rmw_id_commited++;
+  commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_ALREADY_COMM_REP, t_id);
+}
+
+static inline void handle_rmw_rep_log_too_small(loc_entry_t *loc_entry,
+                                                cp_rmw_rep_t *rep,
+                                                rmw_rep_info_t *rep_info,
+                                                const uint16_t t_id)
+{
+  rep_info->ready_to_inspect = true;
+  rep_info->log_too_small++;
+  commit_rmw(loc_entry->kv_ptr, (void*) rep, loc_entry, FROM_LOG_TOO_LOW_REP, t_id);
+}
+
+static inline void handle_rmw_rep_seen_lower_acc(loc_entry_t *loc_entry,
+                                                 cp_rmw_rep_t *rep,
+                                                 rmw_rep_info_t *rep_info,
+                                                 bool is_accept,
+                                                 const uint16_t t_id)
+{
+  rep_info->already_accepted++;
+  check_handle_rmw_rep_seen_lower_acc(loc_entry, rep, is_accept);
+  // Store the accepted rmw only if no higher priority reps have been seen
+  if (rep_info->seen_higher_prop_acc +
+      rep_info->rmw_id_commited + rep_info->log_too_small == 0) {
+    store_rmw_rep_in_help_loc_entry(loc_entry, rep, t_id);
+  }
+}
+
+static inline void handle_rmw_rep_higher_acc_prop(cp_rmw_rep_t *rep,
+                                                  rmw_rep_info_t *rep_info,
+                                                  bool is_accept,
+                                                  const uint16_t t_id)
+{
+  if (!is_accept) rep_info->ready_to_inspect = true;
+  rep_info->seen_higher_prop_acc++;
+  print_handle_rmw_rep_seen_higher(rep, rep_info, is_accept, t_id);
+  if (rep->ts.version > rep_info->seen_higher_prop_version) {
+    rep_info->seen_higher_prop_version = rep->ts.version;
+    print_handle_rmw_rep_higher_ts(rep_info, t_id);
+  }
+}
+
+static inline void handle_rmw_rep_log_too_high(rmw_rep_info_t *rep_info)
+{
+  rep_info->log_too_high++;
+}
+
 
 // Handle a proposal/accept reply
-static inline void handle_prop_or_acc_rep(struct rmw_rep_message *rep_mes,
-                                          struct rmw_rep_last_committed *rep,
+static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
+                                          cp_rmw_rep_t *rep,
                                           loc_entry_t *loc_entry,
                                           bool is_accept,
                                           const uint16_t t_id)
@@ -697,82 +775,35 @@ static inline void handle_prop_or_acc_rep(struct rmw_rep_message *rep_mes,
 
   rmw_rep_info_t *rep_info = &loc_entry->rmw_reps;
   checks_when_handling_prop_acc_rep(loc_entry, rep, is_accept, t_id);
-  rep_info->tot_replies++;
-  if (rep_info->tot_replies >= QUORUM_NUM) {
-    rep_info->ready_to_inspect = true;
-  }
-
-  if (rep->opcode > RMW_ACK_BASE_TS_STALE) rep_info->nacks++;
+  bookkeeping_for_rep_info(rep_info, rep);
 
   switch (rep->opcode) {
     case RMW_ACK_BASE_TS_STALE:
-      write_kv_if_conditional_on_netw_ts(loc_entry->kv_ptr, rep->value,
-                                         (size_t) VALUE_SIZE, FROM_BASE_TS_STALE, rep->ts);
-      assign_netw_ts_to_ts(&loc_entry->base_ts, &rep->ts); // this is an optimization, in case we send proposes again
     case RMW_ACK:
-      loc_entry->base_ts_found = true;
-      rep_info->acks++;
-      if (ENABLE_ASSERTIONS)
-        assert(rep_mes->m_id < MACHINE_NUM && rep_mes->m_id != machine_id);
-      if (DEBUG_RMW)
-        my_printf(green, "Wrkr %u, the received rep is an %s ack, "
-                         "total acks %u \n", t_id, is_accept ? "acc" : "prop",
-                  rep_info->acks);
+      handle_rmw_rep_ack(rep_mes, rep, loc_entry,
+                         rep_info, is_accept, t_id);
       break;
     case RMW_ID_COMMITTED:
-      rep_info->no_need_to_bcast = true;
     case RMW_ID_COMMITTED_SAME_LOG:
-      rep_info->ready_to_inspect = true;
-      rep_info->rmw_id_commited++;
-      commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_ALREADY_COMM_REP, t_id);
+      handle_rmw_rep_rmw_id_committed(loc_entry, rep, rep_info, t_id);
       break;
     case LOG_TOO_SMALL:
-      rep_info->ready_to_inspect = true;
-      rep_info->log_too_small++;
-      commit_rmw(loc_entry->kv_ptr, (void*) rep, loc_entry, FROM_LOG_TOO_LOW_REP, t_id);
-      //attempt_local_commit_from_rep(rep, loc_entry, t_id);
+      handle_rmw_rep_log_too_small(loc_entry, rep, rep_info, t_id);
       break;
     case SEEN_LOWER_ACC:
-      rep_info->already_accepted++;
-      if (ENABLE_ASSERTIONS) {
-        assert(compare_netw_ts_with_ts(&rep->ts, &loc_entry->new_ts) == SMALLER);
-        assert(!is_accept);
-      }
-      // Store the accepted rmw only if no higher priority reps have been seen
-      if (rep_info->seen_higher_prop_acc +
-          rep_info->rmw_id_commited + rep_info->log_too_small == 0) {
-        store_rmw_rep_to_help_loc_entry(loc_entry, rep, t_id);
-      }
+      handle_rmw_rep_seen_lower_acc(loc_entry, rep, rep_info, is_accept, t_id);
       break;
     case SEEN_HIGHER_ACC:
     case SEEN_HIGHER_PROP:
-      if (!is_accept) rep_info->ready_to_inspect = true;
-      rep_info->seen_higher_prop_acc++;
-      if (DEBUG_RMW)
-        my_printf(yellow, "Wrkr %u: the %s rep is %u, %u sum of all other reps %u \n", t_id,
-                  is_accept ? "acc" : "prop",rep->opcode,
-                  rep_info->seen_higher_prop_acc,
-                  rep_info->rmw_id_commited + rep_info->log_too_small +
-                  rep_info->already_accepted);
-      if (rep->ts.version > rep_info->seen_higher_prop_version) {
-        rep_info->seen_higher_prop_version = rep->ts.version;
-        if (DEBUG_RMW)
-          my_printf(yellow, "Wrkr %u: overwriting the TS version %u \n",
-                    t_id, rep_info->seen_higher_prop_version);
-      }
+      handle_rmw_rep_higher_acc_prop(rep, rep_info, is_accept, t_id);
       break;
     case LOG_TOO_HIGH:
-      rep_info->log_too_high++;
+      handle_rmw_rep_log_too_high(rep_info);
       break;
-    default:
-      if (ENABLE_ASSERTIONS) assert(false);
+    default: my_assert(false, "");
   }
 
-  if (ENABLE_ASSERTIONS) {
-    if (is_accept) assert(loc_entry->state == ACCEPTED);
-    if (!is_accept) assert(loc_entry->state == PROPOSED);
-    check_sum_of_reps(loc_entry);
-  }
+  check_handle_rmw_rep_end(loc_entry, t_id);
 }
 
 
