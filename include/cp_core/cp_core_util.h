@@ -717,7 +717,8 @@ static inline void handle_rmw_rep_rmw_id_committed(loc_entry_t *loc_entry,
     rep_info->no_need_to_bcast = true;
   rep_info->ready_to_inspect = true;
   rep_info->rmw_id_commited++;
-  commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_ALREADY_COMM_REP, t_id);
+  commit_rmw(loc_entry->kv_ptr, NULL, loc_entry,
+             FROM_ALREADY_COMM_REP, t_id);
 }
 
 static inline void handle_rmw_rep_log_too_small(loc_entry_t *loc_entry,
@@ -727,7 +728,8 @@ static inline void handle_rmw_rep_log_too_small(loc_entry_t *loc_entry,
 {
   rep_info->ready_to_inspect = true;
   rep_info->log_too_small++;
-  commit_rmw(loc_entry->kv_ptr, (void*) rep, loc_entry, FROM_LOG_TOO_LOW_REP, t_id);
+  commit_rmw(loc_entry->kv_ptr, (void*) rep, loc_entry,
+             FROM_LOG_TOO_LOW_REP, t_id);
 }
 
 static inline void handle_rmw_rep_seen_lower_acc(loc_entry_t *loc_entry,
@@ -803,7 +805,7 @@ static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
     default: my_assert(false, "");
   }
 
-  check_handle_rmw_rep_end(loc_entry, t_id);
+  check_handle_rmw_rep_end(loc_entry, is_accept);
 }
 
 
