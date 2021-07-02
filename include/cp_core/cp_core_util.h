@@ -578,6 +578,31 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
   unlock_kv_ptr(kv_ptr, t_id);
 }
 
+static inline void fil_commit_info_based_on_flag(void* rmw, loc_entry_t *loc_entry,
+                                                 commit_info_t *com_info,
+                                                 uint8_t flag, uint16_t t_id)
+{
+  switch (flag) {
+    case FROM_LOG_TOO_LOW_REP:
+      fill_commit_info_from_rep(com_info, rmw, flag);
+      break;
+    case FROM_ALREADY_COMM_REP:
+    case FROM_LOCAL:
+      fill_commit_info_from_local(com_info, loc_entry, flag);
+      break;
+    case FROM_ALREADY_COMM_REP_HELP:
+    case FROM_LOCAL_HELP:
+      fill_commit_info_from_loc_help(com_info, loc_entry->help_loc_entry, flag);
+      break;
+    case FROM_REMOTE_COMMIT:
+      fill_commit_info_from_rem_commit(com_info, rmw, flag);
+      break;
+    case FROM_REMOTE_COMMIT_NO_VAL:
+      fill_commit_info_from_rem_commit_no_val(com_info, rmw, flag);
+      break;
+    default: my_assert(false, "");
+  }
+}
 
 static inline void commit_rmw(mica_op_t *kv_ptr,
                               void* rmw, loc_entry_t *loc_entry,
@@ -585,50 +610,8 @@ static inline void commit_rmw(mica_op_t *kv_ptr,
 {
 
   process_commit_flags(rmw, loc_entry, &flag);
-  struct rmw_rep_last_committed *rep;
-  struct commit *com;
-  struct commit_no_val *com_no_val;
   commit_info_t com_info;
-  //mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  ts_tuple_t base_ts = {0, 0};
-  switch (flag) {
-    case FROM_LOG_TOO_LOW_REP:
-      rep = (struct rmw_rep_last_committed *) rmw;
-      assign_netw_ts_to_ts(&base_ts, &rep->ts);
-      fill_commit_info(&com_info, flag, rep->rmw_id,
-                       rep->log_no_or_base_version,
-                       base_ts, rep->value, true);
-      break;
-    case FROM_ALREADY_COMM_REP:
-    case FROM_LOCAL:
-      fill_commit_info(&com_info, flag, loc_entry->rmw_id.id,
-                       loc_entry->accepted_log_no, loc_entry->base_ts,
-                       loc_entry->value_to_write, loc_entry->rmw_is_successful);
-      break;
-    case FROM_ALREADY_COMM_REP_HELP:
-    case FROM_LOCAL_HELP:
-      fill_commit_info(&com_info, flag, loc_entry->help_loc_entry->rmw_id.id,
-                       loc_entry->help_loc_entry->log_no,
-                       loc_entry->help_loc_entry->base_ts,
-                       loc_entry->help_loc_entry->value_to_write,
-                       true);
-      break;
-    case FROM_REMOTE_COMMIT:
-      com = (struct commit *) rmw;
-      assert(com->opcode == COMMIT_OP);
-      assign_netw_ts_to_ts(&base_ts, &com->base_ts);
-      fill_commit_info(&com_info, flag, com->t_rmw_id,
-                       com->log_no, base_ts, com->value, true);
-      break;
-    case FROM_REMOTE_COMMIT_NO_VAL:
-      com_no_val = (struct commit_no_val *) rmw;
-      fill_commit_info(&com_info, flag, com_no_val->t_rmw_id,
-                       com_no_val->log_no, base_ts, NULL, true);
-      com_info.no_value = true;
-      break;
-    default:
-      if (ENABLE_ASSERTIONS) {assert(false);}
-  }
+  fil_commit_info_based_on_flag(rmw, loc_entry, &com_info, flag, t_id);
   commit_algorithm(kv_ptr, &com_info, t_id);
 }
 

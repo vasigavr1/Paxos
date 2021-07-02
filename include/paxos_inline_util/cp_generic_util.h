@@ -57,27 +57,29 @@ static inline const char* committing_flag_to_str(uint8_t state)
 
 static inline const char* state_to_str(uint8_t state)
 {
-  switch (state)
-  {
-    case INVALID_RMW:
-      return "INVALID_RMW";
-    case PROPOSED:
-      return "PROPOSED";
-    case ACCEPTED:
-      return "ACCEPTED";
-    case NEEDS_KV_PTR:
-      return "NEEDS_KV_PTR";
-    case RETRY_WITH_BIGGER_TS:
-      return "RETRY_WITH_BIGGER_TS";
-    case MUST_BCAST_COMMITS:
-      return "MUST_BCAST_COMMITS";
-    case MUST_BCAST_COMMITS_FROM_HELP:
-      return "MUST_BCAST_COMMITS_FROM_HELP";
-    case COMMITTED:
-      return "COMMITTED";
-    case CAS_FAILED:
-      return "CAS_FAILED";
-    default: return "Unknown";
+  if (ENABLE_ASSERTIONS) {
+    switch (state) {
+      case INVALID_RMW:
+        return "INVALID_RMW";
+      case PROPOSED:
+        return "PROPOSED";
+      case ACCEPTED:
+        return "ACCEPTED";
+      case NEEDS_KV_PTR:
+        return "NEEDS_KV_PTR";
+      case RETRY_WITH_BIGGER_TS:
+        return "RETRY_WITH_BIGGER_TS";
+      case MUST_BCAST_COMMITS:
+        return "MUST_BCAST_COMMITS";
+      case MUST_BCAST_COMMITS_FROM_HELP:
+        return "MUST_BCAST_COMMITS_FROM_HELP";
+      case COMMITTED:
+        return "COMMITTED";
+      case CAS_FAILED:
+        return "CAS_FAILED";
+      default:
+        return "Unknown";
+    }
   }
 }
 

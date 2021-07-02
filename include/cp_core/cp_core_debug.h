@@ -602,6 +602,11 @@ static inline void check_registered_against_kv_ptr_last_committed(mica_op_t *kv_
   }
 }
 
+static inline void check_fill_com_info(uint32_t log_no)
+{
+  if (ENABLE_ASSERTIONS) assert(log_no > 0);
+}
+
 
 
 #endif

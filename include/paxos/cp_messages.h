@@ -175,14 +175,14 @@ typedef struct cp_acc_message_ud_req {
 } cp_acc_mes_ud_t;
 
 /// Commits
-struct commit_no_val {
+typedef struct commit_no_val {
   uint32_t log_no;
   uint8_t unused;
   uint8_t opcode;
   uint8_t unused_[2];
   mica_key_t key;
   uint64_t t_rmw_id; //rmw lid to be committed
-}__attribute__((__packed__));
+}__attribute__((__packed__)) cp_com_no_val_t;
 
 typedef struct commit {
   struct network_ts_tuple base_ts;
