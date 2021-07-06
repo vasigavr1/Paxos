@@ -240,7 +240,8 @@ void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
 
 //------------------------------HELP STUCK RMW------------------------------------------
 // When time-out-ing on a stuck Accepted value, and try to help it, you need to first propose your own
-static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *stall_info, mica_op_t  *kv_ptr,
+static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *stall_info,
+                                                                 mica_op_t  *kv_ptr,
                                                                  loc_entry_t *loc_entry,
                                                                  bool help_myself, uint16_t t_id)
 {
@@ -827,15 +828,15 @@ static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
 
 
 
-static inline bool inspect_commits(context_t *ctx,
+static inline bool inspect_commits(cp_core_ctx_t *cp_core_ctx,
                                    loc_entry_t* loc_entry)
 {
 
   loc_entry_t *entry_to_commit =
       loc_entry->state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
-  bool inserted_commit = cp_com_insert(ctx, entry_to_commit, loc_entry->state);
+  bool inserted_commit = cp_com_insert(cp_core_ctx->netw_ctx, entry_to_commit, loc_entry->state);
   if (inserted_commit) {
-    print_commit_latest_committed(loc_entry, ctx->t_id);
+    print_commit_latest_committed(loc_entry, cp_core_ctx->t_id);
     loc_entry->state = COMMITTED;
     return true;
   }

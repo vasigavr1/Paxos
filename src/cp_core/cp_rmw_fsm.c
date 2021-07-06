@@ -42,11 +42,11 @@ static inline void sec_fsm_bcast_and_retry(cp_core_ctx_t *cp_core_ctx,
 {
   switch (loc_entry->state) {
     case RETRY_WITH_BIGGER_TS:
-      handle_retry_state(cp_core_ctx->netw_ctx, loc_entry);
+      handle_retry_state(cp_core_ctx, loc_entry);
       break;
     case MUST_BCAST_COMMITS:
     case MUST_BCAST_COMMITS_FROM_HELP:
-      inspect_commits(cp_core_ctx->netw_ctx, loc_entry);
+      inspect_commits(cp_core_ctx, loc_entry);
       break;
     default: break;
   }
