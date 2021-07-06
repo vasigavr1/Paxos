@@ -471,6 +471,17 @@ static inline void take_local_kv_ptr_to_acc_state_when_helping(mica_op_t *kv_ptr
   loc_entry->state = ACCEPTED;
 }
 
+static inline void clean_up_if_cannot_accept_locally(mica_op_t *kv_ptr,
+                                                     loc_entry_t *loc_entry,
+                                                     uint16_t t_id)
+{
+  checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+  loc_entry->state = NEEDS_KV_PTR;
+  loc_entry->help_loc_entry->state = INVALID_RMW;
+}
+
+
 // After gathering a quorum of proposal reps, one of them was a lower TS accept, try and help it
 static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
                                                 uint16_t t_id)
@@ -489,12 +500,8 @@ static inline void attempt_local_accept_to_help(loc_entry_t *loc_entry,
   if (can_accept_locally)
     take_local_kv_ptr_to_acc_state_when_helping(kv_ptr, loc_entry,
                                                 help_loc_entry, t_id);
-  else {
-    checks_after_failure_to_locally_accept_help(kv_ptr, loc_entry, t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-    loc_entry->state = NEEDS_KV_PTR;
-    help_loc_entry->state = INVALID_RMW;
-  }
+  else clean_up_if_cannot_accept_locally(kv_ptr, loc_entry, t_id);
+
 }
 
 
@@ -658,7 +665,22 @@ static inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
  * --------------------HANDLE REPLIES-------------------------------------
  * --------------------------------------------------------------------------*/
 
-// The help_loc_entry is used when receiving an already committed reply or an already accepted
+static inline void overwrite_help_loc_entry(loc_entry_t* loc_entry,
+                                            cp_rmw_rep_t* prop_rep)
+{
+  loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+  if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) loc_entry->helping_flag = NOT_HELPING;
+  assign_netw_ts_to_ts(&help_loc_entry->new_ts, &prop_rep->ts);
+  help_loc_entry->base_ts.version = prop_rep->log_no_or_base_version;
+  help_loc_entry->base_ts.m_id = prop_rep->base_m_id;
+  help_loc_entry->log_no = loc_entry->log_no;
+  help_loc_entry->state = ACCEPTED;
+  help_loc_entry->rmw_id.id = prop_rep->rmw_id;
+  memcpy(help_loc_entry->value_to_write, prop_rep->value, (size_t) RMW_VALUE_SIZE);
+  help_loc_entry->key = loc_entry->key;
+}
+
+
 static inline void store_rmw_rep_in_help_loc_entry(loc_entry_t* loc_entry,
                                                    cp_rmw_rep_t* prop_rep,
                                                    uint16_t t_id)
@@ -667,18 +689,15 @@ static inline void store_rmw_rep_in_help_loc_entry(loc_entry_t* loc_entry,
   compare_t ts_comp = compare_netw_ts_with_ts(&prop_rep->ts, &help_loc_entry->new_ts);
   check_store_rmw_rep_to_help_loc_entry(loc_entry, prop_rep, ts_comp);
 
-  if (help_loc_entry->state == INVALID_RMW ||
-      ts_comp == GREATER) {
-    if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) loc_entry->helping_flag = NOT_HELPING;
-    assign_netw_ts_to_ts(&help_loc_entry->new_ts, &prop_rep->ts);
-    help_loc_entry->base_ts.version = prop_rep->log_no_or_base_version;
-    help_loc_entry->base_ts.m_id = prop_rep->base_m_id;
-    help_loc_entry->log_no = loc_entry->log_no;
-    help_loc_entry->state = ACCEPTED;
-    help_loc_entry->rmw_id.id = prop_rep->rmw_id;
-    memcpy(help_loc_entry->value_to_write, prop_rep->value, (size_t) RMW_VALUE_SIZE);
-    help_loc_entry->key = loc_entry->key;
-  }
+  bool have_not_found_any_ts_to_help = help_loc_entry->state == INVALID_RMW;
+  bool found_higher_ts_to_help = ts_comp == GREATER;
+
+
+  bool must_overwrite_help_loc_entry = have_not_found_any_ts_to_help ||
+                                       found_higher_ts_to_help;
+
+  if (must_overwrite_help_loc_entry)
+    overwrite_help_loc_entry(loc_entry, prop_rep);
 }
 
 static inline void bookkeeping_for_rep_info(rmw_rep_info_t *rep_info,
@@ -740,11 +759,14 @@ static inline void handle_rmw_rep_seen_lower_acc(loc_entry_t *loc_entry,
 {
   rep_info->already_accepted++;
   check_handle_rmw_rep_seen_lower_acc(loc_entry, rep, is_accept);
-  // Store the accepted rmw only if no higher priority reps have been seen
-  if (rep_info->seen_higher_prop_acc +
-      rep_info->rmw_id_commited + rep_info->log_too_small == 0) {
+
+  bool no_higher_priority_reps_have_been_seen =
+      rep_info->seen_higher_prop_acc +
+      rep_info->rmw_id_commited + rep_info->log_too_small == 0;
+
+  if (no_higher_priority_reps_have_been_seen)
     store_rmw_rep_in_help_loc_entry(loc_entry, rep, t_id);
-  }
+
 }
 
 static inline void handle_rmw_rep_higher_acc_prop(cp_rmw_rep_t *rep,
