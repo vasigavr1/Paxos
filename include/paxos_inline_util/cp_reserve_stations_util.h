@@ -271,9 +271,8 @@ static inline void cp_apply_acks(context_t *ctx,
     com_rob->acks_seen++;
     cp_check_ack_and_print(ctx, com_rob, ack, ack_i, ack_ptr, ack_num);
     if (com_rob->acks_seen == REMOTE_QUORUM) {
-      act_on_quorum_of_commit_acks(&cp_ctx->stall_info,
-                                   &cp_ctx->rmw_entries[com_rob->sess_id],
-                                   ctx->t_id);
+      act_on_quorum_of_commit_acks(cp_ctx->cp_core_ctx,
+                                   com_rob->sess_id);
       com_rob->state = READY_COMMIT;
     }
     MOD_INCR(ack_ptr, COM_ROB_SIZE);

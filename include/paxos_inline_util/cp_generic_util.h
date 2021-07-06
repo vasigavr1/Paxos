@@ -468,15 +468,20 @@ static inline void cp_acc_insert(context_t *ctx,
                 helping, 0);
 }
 
-static inline void cp_com_insert(context_t *ctx,
+static inline bool cp_com_insert(context_t *ctx,
                                  loc_entry_t *loc_entry,
                                  uint32_t state)
 {
-  od_insert_mes(ctx, COM_QP_ID,
-                (uint32_t) COM_SIZE,
-                1,
-                false, loc_entry,
-                state, 0);
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  if (cp_ctx->com_rob->capacity < COM_ROB_SIZE) {
+    od_insert_mes(ctx, COM_QP_ID,
+                  (uint32_t) COM_SIZE,
+                  1,
+                  false, loc_entry,
+                  state, 0);
+    return true;
+  }
+  else return false;
 }
 
 #endif //CP_GENERIC_UTILITY_H

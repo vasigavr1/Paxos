@@ -7,110 +7,6 @@
 
 #include <cp_core_generic_util.h>
 
-/*--------------------------------------------------------------------------
- * --------------------KVS_FILTERING--RECEIVING PROPOSE ACCEPT---------------
- * --------------------------------------------------------------------------*/
-
-// Check the global RMW-id structure, to see if an RMW has already been committed
-static inline bool the_rmw_has_committed(mica_op_t *kv_ptr,
-                                         uint64_t rmw_id,
-                                         uint32_t log_no, uint16_t t_id,
-                                         struct rmw_rep_last_committed *rep)
-{
-  uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
-  check_the_rmw_has_committed(glob_sess_id);
-
-  if (committed_glob_sess_rmw_id[glob_sess_id] >= rmw_id) {
-    bool same_log = kv_ptr->last_committed_log_no == log_no;
-    rep->opcode = (uint8_t) (same_log ? RMW_ID_COMMITTED_SAME_LOG : RMW_ID_COMMITTED);
-    check_when_rmw_has_committed(kv_ptr, rep, glob_sess_id, log_no, rmw_id, t_id);
-    return true;
-  }
-  else return false;
-}
-
-static inline void log_no_too_low(uint32_t log_no, mica_op_t *kv_ptr,
-                                  uint64_t rmw_l_id,
-                                  uint16_t t_id,
-                                  cp_rmw_rep_t *rep)
-{
-  print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
-  rep->opcode = LOG_TOO_SMALL;
-  fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
-}
-
-static inline void log_no_too_high(uint32_t log_no, mica_op_t *kv_ptr,
-                                  uint16_t t_id,
-                                  cp_rmw_rep_t *rep)
-{
-  print_is_log_too_high(log_no, kv_ptr, t_id);
-  rep->opcode = LOG_TOO_HIGH;
-}
-
-static inline bool is_log_too_low_or_too_high(uint32_t log_no, mica_op_t *kv_ptr,
-                                              uint64_t rmw_l_id,
-                                              uint16_t t_id,
-                                              cp_rmw_rep_t *rep)
-{
-  uint32_t expected_log_no = kv_ptr->last_committed_log_no + 1;
-  if (log_no == expected_log_no)
-    return false;
-  else if (log_no < expected_log_no)
-    log_no_too_low(log_no, kv_ptr, rmw_l_id, t_id, rep);
-  else
-    log_no_too_high(log_no, kv_ptr, t_id, rep);
-
-  return true;
-}
-
-
-static inline bool is_log_lower_higher_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
-                                                           uint64_t rmw_l_id,
-                                                           uint16_t t_id,
-                                                           cp_rmw_rep_t *rep)
-{
-  check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
-
-  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
-    return true;
-  return is_log_too_low_or_too_high(log_no, kv_ptr, rmw_l_id, t_id, rep);
-}
-
-
-static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
-                                           struct propose *prop,
-                                           struct rmw_rep_last_committed *rep,
-                                           uint16_t t_id)
-{
-  if (prop->base_ts.version == DO_NOT_CHECK_BASE_TS) return RMW_ACK;
-
-  compare_t  comp_ts = compare_ts(&kv_ptr->ts, &prop->base_ts);
-  if (comp_ts == GREATER) {
-    rep->ts.version = kv_ptr->ts.version;
-    rep->ts.m_id = kv_ptr->ts.m_id;
-    memcpy(rep->value, kv_ptr->value, (size_t) RMW_VALUE_SIZE);
-    return RMW_ACK_BASE_TS_STALE;
-  }
-  else return RMW_ACK;
-}
-
-
-
-// Search in the prepare entries for an lid (used when receiving a prep reply)
-static inline int search_prop_entries_with_l_id(loc_entry_t * loc_entry_array,
-                                                uint8_t state,
-                                                uint64_t l_id)
-{
-  uint16_t entry = (uint16_t) (l_id % SESSIONS_PER_THREAD);
-  check_search_prop_entries_with_l_id(entry);
-  if (loc_entry_array[entry].state == state &&
-      loc_entry_array[entry].l_id == l_id)
-    return entry;
-  return -1; // i.e. l_id not found!!
-
-}
-
-
 
 /*--------------------------------------------------------------------------
  * --------------------RMW-INIT---------------------------------------------
@@ -191,9 +87,7 @@ static inline void activate_kv_pair(uint8_t state, uint32_t new_version, mica_op
 }
 
 
-/*--------------------------------------------------------------------------
- * --------------------REMOTE RMW REQUESTS-------------------------------------
- * --------------------------------------------------------------------------*/
+
 
 void create_prop_rep(cp_prop_t *prop,
                      cp_prop_mes_t *prop_mes,
@@ -209,8 +103,9 @@ void create_acc_rep(cp_acc_t *acc,
                     uint16_t t_id);
 
 /*--------------------------------------------------------------------------
- * --------------------RECEIVING REPLY-UTILITY-------------------------------------
+ * ---------------------------------------------------------
  * --------------------------------------------------------------------------*/
+
 
 static inline void take_kv_ptr_to_acc_state(mica_op_t *kv_ptr,
                                             loc_entry_t *loc_entry,
@@ -319,9 +214,8 @@ void commit_rmw(mica_op_t *kv_ptr,
 
 // On gathering quorum of acks for commit, commit locally and
 // signal that the session must be freed if not helping
-void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
-                                  loc_entry_t *loc_entry,
-                                  uint16_t t_id);
+void act_on_quorum_of_commit_acks(cp_core_ctx_t *cp_core_ctx,
+                                  uint16_t sess_id);
 
 
 
@@ -331,10 +225,9 @@ void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
 
 
 // Handle read replies that refer to RMWs (either replies to accepts or proposes)
-void handle_rmw_rep_replies(loc_entry_t *loc_entry_array,
+void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
                             cp_rmw_rep_mes_t *r_rep_mes,
-                            bool is_accept,
-                            uint16_t t_id);
+                            bool is_accept);
 
 
 
@@ -504,9 +397,8 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 //------------------------------ALREADY-COMMITTED------------------------------------------
 
 //When inspecting an accept/propose and have received already-committed Response
-static inline void handle_already_committed_rmw(sess_stall_t *stall_info,
-                                                loc_entry_t *loc_entry,
-                                                uint16_t t_id)
+static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
+                                                loc_entry_t *loc_entry)
 {
   // Broadcast commits iff you got back you own RMW
   if (!loc_entry->rmw_reps.no_need_to_bcast &&
@@ -519,7 +411,8 @@ static inline void handle_already_committed_rmw(sess_stall_t *stall_info,
   else {
     //free the session here as well
     loc_entry->state = INVALID_RMW;
-    free_session_from_rmw(loc_entry, stall_info, true, t_id);
+    free_session_from_rmw(loc_entry, cp_core_ctx->stall_info,
+                          true, cp_core_ctx->t_id);
   }
 }
 
@@ -528,7 +421,7 @@ static inline void handle_already_committed_rmw(sess_stall_t *stall_info,
 
 //------------------------------ACKS------------------------------------------
 // If a quorum of proposal acks have been gathered, try to broadcast accepts
-static inline void act_on_quorum_of_prop_acks(context_t *ctx,
+static inline void act_on_quorum_of_prop_acks(cp_core_ctx_t *cp_core_ctx,
                                               loc_entry_t *loc_entry,
                                               uint16_t t_id)
 {
@@ -540,7 +433,7 @@ static inline void act_on_quorum_of_prop_acks(context_t *ctx,
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
     local_rmw_ack(loc_entry);
     check_loc_entry_metadata_is_reset(loc_entry, "act_on_quorum_of_prop_acks", t_id);
-    cp_acc_insert(ctx, loc_entry, false);
+    cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry, false);
     loc_entry->killable = false;
   }
 }
@@ -551,7 +444,7 @@ static inline void act_on_quorum_of_prop_acks(context_t *ctx,
 
 //------------------------------SEEN-LOWER_ACCEPT------------------------------------------
 // When a quorum of prop replies have been received, and one of the replies says it has accepted an RMW with lower TS
-static inline void act_on_receiving_already_accepted_rep_to_prop(context_t *ctx,
+static inline void act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx_t *cp_core_ctx,
                                                                  loc_entry_t* loc_entry,
                                                                  uint16_t t_id)
 {
@@ -561,7 +454,7 @@ static inline void act_on_receiving_already_accepted_rep_to_prop(context_t *ctx,
     loc_entry->helping_flag = HELPING;
     zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
     local_rmw_ack(loc_entry);
-    cp_acc_insert(ctx, loc_entry->help_loc_entry, true);
+    cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry->help_loc_entry, true);
   }
 
 }
@@ -754,8 +647,7 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
 
 
 // local_entry->state = NEEDS_KV_PTR
-static inline void handle_needs_kv_ptr_state(context_t *ctx,
-                                             sess_stall_t *stall_info,
+static inline void handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
                                              loc_entry_t *loc_entry,
                                              uint16_t sess_i,
                                              uint16_t t_id)
@@ -765,9 +657,9 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
   // If this fails to grab a kv_ptr it will try to update
   // the (rmw_id + state) that is being waited on.
   // If it updates it will zero the back-off counter
-  if (!attempt_to_grab_kv_ptr_after_waiting(stall_info, kv_ptr, loc_entry,
+  if (!attempt_to_grab_kv_ptr_after_waiting(cp_core_ctx->stall_info, kv_ptr, loc_entry,
                                             sess_i, t_id)) {
-    if (ENABLE_ASSERTIONS) assert(stall_info->stalled);
+    if (ENABLE_ASSERTIONS) assert(cp_core_ctx->stall_info->stalled);
     loc_entry->back_off_cntr++;
     if (loc_entry->back_off_cntr == RMW_BACK_OFF_TIMEOUT) {
       //   my_printf(yellow, "Wrkr %u  sess %u waiting for an rmw on key %u on log %u, back_of cntr %u waiting on rmw_id %u state %u \n",
@@ -779,7 +671,7 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
       // However we may wait on a "local" glob sess id, because it is being helped
       // if have accepted a value help it
       if (loc_entry->help_rmw->state == ACCEPTED)
-        attempt_to_help_a_locally_accepted_value(stall_info, loc_entry, kv_ptr, t_id); // zeroes the back-off counter
+        attempt_to_help_a_locally_accepted_value(cp_core_ctx->stall_info, loc_entry, kv_ptr, t_id); // zeroes the back-off counter
         // if have received a proposal, send your own proposal
       else  if (loc_entry->help_rmw->state == PROPOSED) {
         attempt_to_steal_a_proposed_kv_ptr(loc_entry, kv_ptr, sess_i, t_id); // zeroes the back-off counter
@@ -788,7 +680,7 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
   }
   if (loc_entry->state == PROPOSED) {
     loc_entry->back_off_cntr = 0;
-    cp_prop_insert(ctx, loc_entry);
+    cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
   }
   check_state_with_allowed_flags(6, (int) loc_entry->state, INVALID_RMW, PROPOSED, NEEDS_KV_PTR,
                                  ACCEPTED, MUST_BCAST_COMMITS);
@@ -796,8 +688,7 @@ static inline void handle_needs_kv_ptr_state(context_t *ctx,
 }
 
 // Inspect each propose that has gathered a quorum of replies
-static inline void inspect_proposes(context_t *ctx,
-                                    sess_stall_t *stall_info,
+static inline void inspect_proposes(cp_core_ctx_t *cp_core_ctx,
                                     loc_entry_t *loc_entry,
                                     uint16_t t_id)
 {
@@ -815,7 +706,7 @@ static inline void inspect_proposes(context_t *ctx,
     // as an optimization clear the kv_ptr entry if it is still in proposed state
     if (loc_entry->accepted_log_no != loc_entry->log_no)
       free_kv_ptr_if_rmw_failed(loc_entry, PROPOSED, t_id);
-    handle_already_committed_rmw(stall_info, loc_entry, t_id);
+    handle_already_committed_rmw(cp_core_ctx, loc_entry);
     check_state_with_allowed_flags(3, (int) loc_entry->state, INVALID_RMW,
                                    MUST_BCAST_COMMITS);
   }
@@ -837,7 +728,7 @@ static inline void inspect_proposes(context_t *ctx,
            loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED) {
     debug_fail_help(loc_entry, " quorum", t_id);
     // Quorum of prop acks gathered: send an accept
-    act_on_quorum_of_prop_acks(ctx, loc_entry, t_id);
+    act_on_quorum_of_prop_acks(cp_core_ctx, loc_entry, t_id);
     check_state_with_allowed_flags(4, (int) loc_entry->state,
                                    ACCEPTED, NEEDS_KV_PTR, MUST_BCAST_COMMITS);
   }
@@ -845,8 +736,8 @@ static inline void inspect_proposes(context_t *ctx,
   else if (rep_info->already_accepted > 0) {
     debug_fail_help(loc_entry, " already accepted", t_id);
     if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
-      act_on_quorum_of_prop_acks(ctx, loc_entry, t_id);
-    else act_on_receiving_already_accepted_rep_to_prop(ctx, loc_entry, t_id);
+      act_on_quorum_of_prop_acks(cp_core_ctx, loc_entry, t_id);
+    else act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx, loc_entry, t_id);
     check_state_with_allowed_flags(4, (int) loc_entry->state, ACCEPTED,
                                    NEEDS_KV_PTR, MUST_BCAST_COMMITS);
   }
@@ -863,7 +754,7 @@ static inline void inspect_proposes(context_t *ctx,
 
 
 // Inspect each propose that has gathered a quorum of replies
-static inline void inspect_accepts(sess_stall_t *stall_info,
+static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
                                    loc_entry_t *loc_entry,
                                    uint16_t t_id)
 {
@@ -885,7 +776,7 @@ static inline void inspect_accepts(sess_stall_t *stall_info,
   }
     // RMW_ID COMMITTED
   else if (rep_info->rmw_id_commited > 0) {
-    handle_already_committed_rmw(stall_info, loc_entry, t_id);
+    handle_already_committed_rmw(cp_core_ctx, loc_entry);
     check_state_with_allowed_flags(3, (int) loc_entry->state, INVALID_RMW,
                                    MUST_BCAST_COMMITS);
     if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
@@ -937,40 +828,74 @@ static inline void inspect_accepts(sess_stall_t *stall_info,
 
 
 static inline bool inspect_commits(context_t *ctx,
-                                   loc_entry_t* loc_entry,
-                                   uint32_t commit_capacity)
+                                   loc_entry_t* loc_entry)
 {
 
   loc_entry_t *entry_to_commit =
       loc_entry->state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
-  if (commit_capacity < COM_ROB_SIZE) {
+  bool inserted_commit = cp_com_insert(ctx, entry_to_commit, loc_entry->state);
+  if (inserted_commit) {
     print_commit_latest_committed(loc_entry, ctx->t_id);
-    cp_com_insert(ctx, entry_to_commit, loc_entry->state);
     loc_entry->state = COMMITTED;
     return true;
   }
   return false;
 }
 
+// Worker inspects its local RMW entries
+static inline void rmw_fsm(cp_core_ctx_t *cp_core_ctx, uint16_t t_id)
+{
+  for (uint16_t sess_i = 0; sess_i < SESSIONS_PER_THREAD; sess_i++) {
+    loc_entry_t* loc_entry = &cp_core_ctx->rmw_entries[sess_i];
+    uint8_t state = loc_entry->state;
+    if (state == INVALID_RMW) continue;
+    check_when_inspecting_rmw(loc_entry, cp_core_ctx->stall_info, sess_i);
 
+    if (state == ACCEPTED)
+      inspect_accepts(cp_core_ctx, loc_entry, t_id);
+    if (state == PROPOSED)
+      inspect_proposes(cp_core_ctx, loc_entry, t_id);
+
+
+
+    /* =============== RETRY ======================== */
+    if (loc_entry->state == RETRY_WITH_BIGGER_TS) {
+      take_kv_ptr_with_higher_TS(cp_core_ctx->stall_info, loc_entry, false, t_id);
+      check_state_with_allowed_flags(5, (int) loc_entry->state, INVALID_RMW, PROPOSED,
+                                     NEEDS_KV_PTR, MUST_BCAST_COMMITS);
+      if (loc_entry->state == PROPOSED) {
+        cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
+      }
+    }
+
+    if (loc_entry->state == MUST_BCAST_COMMITS ||
+        loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP) {
+      if (inspect_commits(cp_core_ctx->netw_ctx, loc_entry))
+        continue;
+    }
+
+    /* =============== NEEDS_KV_PTR ======================== */
+    if (state == NEEDS_KV_PTR) {
+      handle_needs_kv_ptr_state(cp_core_ctx, loc_entry, sess_i, t_id);
+    }
+  }
+}
 /*--------------------------------------------------------------------------
  * --------------------INIT RMW-------------------------------------
  * --------------------------------------------------------------------------*/
 
 // Insert an RMW in the local RMW structs
-static inline void insert_rmw(context_t *ctx,
-                              loc_entry_t *loc_entry_array,
-                              sess_stall_t *stall_info,
+static inline void insert_rmw(cp_core_ctx_t *cp_core_ctx,
                               trace_op_t *op,
                               uint16_t t_id)
 {
   uint16_t session_id = op->session_id;
-  loc_entry_t *loc_entry = &loc_entry_array[session_id];
+  loc_entry_t *loc_entry = &cp_core_ctx->rmw_entries[session_id];
   if (loc_entry->state == CAS_FAILED) {
     //printf("Wrkr%u, sess %u, entry %u rmw_failing \n", t_id, session_id, resp->rmw_entry);
     signal_completion_to_client(session_id, op->index_to_req_array, t_id);
-    stall_info->stalled[session_id] = false;
-    stall_info->all_stalled = false;
+    cp_core_ctx->stall_info->stalled[session_id] = false;
+    cp_core_ctx->stall_info->all_stalled = false;
     loc_entry->state = INVALID_RMW;
     return;
   }
@@ -989,14 +914,14 @@ static inline void insert_rmw(context_t *ctx,
         assert(op->ts.version == ALL_ABOARD_TS);
       }
       loc_entry->accepted_log_no = loc_entry->log_no;
-      cp_acc_insert(ctx, loc_entry, false);
+      cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry, false);
       loc_entry->killable = false;
       loc_entry->all_aboard = true;
       loc_entry->all_aboard_time_out = 0;
     }
     else {
       if (ENABLE_ASSERTIONS) assert(op->ts.version == PAXOS_TS);
-      cp_prop_insert(ctx, loc_entry);
+      cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
     }
   }
   else if (loc_entry->state == NEEDS_KV_PTR) {

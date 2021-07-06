@@ -65,6 +65,9 @@ typedef struct rmw_rep_info {
 }rmw_rep_info_t;
 
 
+
+
+
 // Entry that keep pending thread-local RMWs, the entries are accessed with session id
 typedef struct rmw_local_entry {
   ts_tuple_t new_ts;
@@ -123,8 +126,6 @@ typedef struct cp_ptr_to_ops {
   uint16_t polled_ops;
 } cp_ptrs_to_ops_t;
 
-
-
 struct l_ids {
   uint64_t inserted_prop_id;
   uint64_t inserted_acc_id;
@@ -132,17 +133,28 @@ struct l_ids {
   uint64_t applied_com_id;
 };
 
+typedef struct cp_core_ctx {
+  loc_entry_t *rmw_entries;
+  sess_stall_t *stall_info;
+  void* appl_ctx;
+  void* netw_ctx;
+  uint16_t t_id;
+} cp_core_ctx_t;
+
 typedef struct cp_ctx {
   fifo_t *com_rob;
   cp_ptrs_to_ops_t *ptrs_to_ops;
   trace_info_t trace_info;
   trace_op_t *ops;
-  loc_entry_t *rmw_entries;
+  cp_core_ctx_t *cp_core_ctx;
   sess_stall_t stall_info;
   struct l_ids l_ids;
   cp_debug_t *debug_loop;
   mica_key_t *key_per_sess;
 } cp_ctx_t;
+
+
+
 
 // A helper to debug sessions by remembering which write holds a given session
 struct session_dbg {

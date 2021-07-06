@@ -144,14 +144,14 @@ static inline void free_session_and_reinstate_loc_entry(sess_stall_t *stall_info
 }
 
 // On gathering quorum of acks for commit, commit locally and signal that the session must be freed if not helping
-inline void act_on_quorum_of_commit_acks(sess_stall_t *stall_info,
-                                                loc_entry_t *loc_entry,
-                                                uint16_t t_id)
+inline void act_on_quorum_of_commit_acks(cp_core_ctx_t *cp_core_ctx,
+                                         uint16_t sess_id)
 {
+  loc_entry_t *loc_entry = &cp_core_ctx->rmw_entries[sess_id];
   check_act_on_quorum_of_commit_acks(loc_entry);
 
   if (loc_entry->helping_flag != HELP_PREV_COMMITTED_LOG_TOO_HIGH)
-    commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, t_id);
+    commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, cp_core_ctx->t_id);
 
-  free_session_and_reinstate_loc_entry(stall_info, loc_entry,t_id);
+  free_session_and_reinstate_loc_entry(cp_core_ctx->stall_info, loc_entry,cp_core_ctx->t_id);
 }

@@ -175,8 +175,19 @@ static inline void handle_prop_or_acc_rep(cp_rmw_rep_mes_t *rep_mes,
   check_handle_rmw_rep_end(loc_entry, is_accept);
 }
 
+static inline int search_prop_entries_with_l_id(loc_entry_t * loc_entry_array,
+                                                uint8_t state,
+                                                uint64_t l_id)
+{
+  uint16_t entry = (uint16_t) (l_id % SESSIONS_PER_THREAD);
+  check_search_prop_entries_with_l_id(entry);
+  if (loc_entry_array[entry].state == state &&
+      loc_entry_array[entry].l_id == l_id)
+    return entry;
+  return -1; // i.e. l_id not found!!
 
-// Handle one accept or propose reply
+}
+
 static inline void find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_array,
                                                  cp_rmw_rep_t *rep,
                                                  cp_rmw_rep_mes_t *rep_mes,
@@ -196,9 +207,9 @@ static inline void find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_array,
 }
 
 // Handle read replies that refer to RMWs (either replies to accepts or proposes)
-inline void handle_rmw_rep_replies(loc_entry_t *loc_entry_array,
+inline void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
                                    cp_rmw_rep_mes_t *r_rep_mes,
-                                   bool is_accept, uint16_t t_id)
+                                   bool is_accept)
 {
   cp_rmw_rep_mes_t *rep_mes = (cp_rmw_rep_mes_t *) r_rep_mes;
   check_state_with_allowed_flags(4, r_rep_mes->opcode, ACCEPT_REPLY,
@@ -208,7 +219,8 @@ inline void handle_rmw_rep_replies(loc_entry_t *loc_entry_array,
   uint16_t byte_ptr = RMW_REP_MES_HEADER; // same for both accepts and replies
   for (uint16_t r_rep_i = 0; r_rep_i < rep_num; r_rep_i++) {
     cp_rmw_rep_t *rep = (cp_rmw_rep_t *) (((void *) rep_mes) + byte_ptr);
-    find_local_and_handle_rmw_rep(loc_entry_array, rep, rep_mes, byte_ptr, is_accept, r_rep_i, t_id);
+    find_local_and_handle_rmw_rep(cp_core_ctx->rmw_entries, rep, rep_mes, byte_ptr, is_accept,
+                                  r_rep_i, cp_core_ctx->t_id);
     byte_ptr += get_size_from_opcode(rep->opcode);
   }
   r_rep_mes->opcode = INVALID_OPCODE;

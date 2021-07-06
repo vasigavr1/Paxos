@@ -4,6 +4,91 @@
 
 #include <cp_core_util.h>
 
+// Check the global RMW-id structure, to see if an RMW has already been committed
+static inline bool the_rmw_has_committed(mica_op_t *kv_ptr,
+                                         uint64_t rmw_id,
+                                         uint32_t log_no, uint16_t t_id,
+                                         struct rmw_rep_last_committed *rep)
+{
+  uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
+  check_the_rmw_has_committed(glob_sess_id);
+
+  if (committed_glob_sess_rmw_id[glob_sess_id] >= rmw_id) {
+    bool same_log = kv_ptr->last_committed_log_no == log_no;
+    rep->opcode = (uint8_t) (same_log ? RMW_ID_COMMITTED_SAME_LOG : RMW_ID_COMMITTED);
+    check_when_rmw_has_committed(kv_ptr, rep, glob_sess_id, log_no, rmw_id, t_id);
+    return true;
+  }
+  else return false;
+}
+
+static inline void log_no_too_low(uint32_t log_no, mica_op_t *kv_ptr,
+                                  uint64_t rmw_l_id,
+                                  uint16_t t_id,
+                                  cp_rmw_rep_t *rep)
+{
+  print_log_too_small(log_no, kv_ptr, rmw_l_id, t_id);
+  rep->opcode = LOG_TOO_SMALL;
+  fill_reply_entry_with_committed_RMW (kv_ptr, rep, t_id);
+}
+
+static inline void log_no_too_high(uint32_t log_no, mica_op_t *kv_ptr,
+                                   uint16_t t_id,
+                                   cp_rmw_rep_t *rep)
+{
+  print_is_log_too_high(log_no, kv_ptr, t_id);
+  rep->opcode = LOG_TOO_HIGH;
+}
+
+static inline bool is_log_too_low_or_too_high(uint32_t log_no, mica_op_t *kv_ptr,
+                                              uint64_t rmw_l_id,
+                                              uint16_t t_id,
+                                              cp_rmw_rep_t *rep)
+{
+  uint32_t expected_log_no = kv_ptr->last_committed_log_no + 1;
+  if (log_no == expected_log_no)
+    return false;
+  else if (log_no < expected_log_no)
+    log_no_too_low(log_no, kv_ptr, rmw_l_id, t_id, rep);
+  else
+    log_no_too_high(log_no, kv_ptr, t_id, rep);
+
+  return true;
+}
+
+
+static inline bool is_log_lower_higher_or_has_rmw_committed(uint32_t log_no, mica_op_t *kv_ptr,
+                                                            uint64_t rmw_l_id,
+                                                            uint16_t t_id,
+                                                            cp_rmw_rep_t *rep)
+{
+  check_log_nos_of_kv_ptr(kv_ptr, "is_log_smaller_or_has_rmw_committed", t_id);
+
+  if (the_rmw_has_committed(kv_ptr, rmw_l_id, log_no, t_id, rep))
+    return true;
+  return is_log_too_low_or_too_high(log_no, kv_ptr, rmw_l_id, t_id, rep);
+}
+
+
+static inline uint8_t is_base_ts_too_small(mica_op_t *kv_ptr,
+                                           struct propose *prop,
+                                           struct rmw_rep_last_committed *rep,
+                                           uint16_t t_id)
+{
+  if (prop->base_ts.version == DO_NOT_CHECK_BASE_TS) return RMW_ACK;
+
+  compare_t  comp_ts = compare_ts(&kv_ptr->ts, &prop->base_ts);
+  if (comp_ts == GREATER) {
+    rep->ts.version = kv_ptr->ts.version;
+    rep->ts.m_id = kv_ptr->ts.m_id;
+    memcpy(rep->value, kv_ptr->value, (size_t) RMW_VALUE_SIZE);
+    return RMW_ACK_BASE_TS_STALE;
+  }
+  else return RMW_ACK;
+}
+
+
+
 static inline uint8_t tell_prop_to_help_lower_acc(cp_prop_t *prop,
                                                   mica_op_t *kv_ptr,
                                                   cp_rmw_rep_t *rep)
