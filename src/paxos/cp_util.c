@@ -303,13 +303,13 @@ loc_entry_t *cp_init_loc_entry(uint16_t t_id)
 }
 
 
-cp_core_ctx_t * cp_init_cp_core_ctx(cp_ctx_t *cp_ctx, context_t *ctx)
+cp_core_ctx_t* cp_init_cp_core_ctx(cp_ctx_t *cp_ctx, context_t *ctx)
 {
   cp_core_ctx_t *cp_core_ctx = calloc(1, sizeof(cp_core_ctx_t));
   cp_core_ctx->rmw_entries = cp_init_loc_entry(ctx->t_id);
-  cp_core_ctx->appl_ctx = cp_ctx;
+  cp_core_ctx->appl_ctx = (void *) cp_ctx;
   cp_core_ctx->stall_info = &cp_ctx->stall_info;
-  cp_core_ctx->netw_ctx = ctx;
+  cp_core_ctx->netw_ctx = (void *) ctx;
   cp_core_ctx->t_id = ctx->t_id;
   return cp_core_ctx;
 }

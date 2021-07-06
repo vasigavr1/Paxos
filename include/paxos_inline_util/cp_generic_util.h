@@ -448,33 +448,34 @@ static inline void cp_rmw_rep_insert(context_t *ctx,
 }
 
 
-static inline void cp_prop_insert(context_t *ctx, loc_entry_t *loc_entry)
+static inline void cp_prop_insert(void *ctx, loc_entry_t *loc_entry)
 {
-  od_insert_mes(ctx, PROP_QP_ID,
+  od_insert_mes((context_t *) ctx, PROP_QP_ID,
                 (uint32_t) PROP_SIZE,
                 PROP_REP_SIZE,
                 false, loc_entry,
                 0, 0);
 }
 
-static inline void cp_acc_insert(context_t *ctx,
+static inline void cp_acc_insert(void *ctx,
                                  loc_entry_t *loc_entry,
                                  bool helping)
 {
-  od_insert_mes(ctx, ACC_QP_ID,
+  od_insert_mes((context_t*) ctx, ACC_QP_ID,
                 (uint32_t) ACC_SIZE,
                 ACC_REP_MES_SIZE,
                 false, loc_entry,
                 helping, 0);
 }
 
-static inline bool cp_com_insert(context_t *ctx,
+static inline bool cp_com_insert(void *ctx,
                                  loc_entry_t *loc_entry,
                                  uint32_t state)
 {
-  cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
+  context_t * od_ctx = (context_t *) ctx;
+  cp_ctx_t *cp_ctx = (cp_ctx_t *) od_ctx->appl_ctx;
   if (cp_ctx->com_rob->capacity < COM_ROB_SIZE) {
-    od_insert_mes(ctx, COM_QP_ID,
+    od_insert_mes(od_ctx, COM_QP_ID,
                   (uint32_t) COM_SIZE,
                   1,
                   false, loc_entry,

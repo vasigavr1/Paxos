@@ -80,9 +80,10 @@ static inline void commit_algorithm(mica_op_t *kv_ptr,
   unlock_kv_ptr(kv_ptr, t_id);
 }
 
-static inline void fil_commit_info_based_on_flag(void* rmw, loc_entry_t *loc_entry,
+static inline void fil_commit_info_based_on_flag(void* rmw,
+                                                 loc_entry_t *loc_entry,
                                                  commit_info_t *com_info,
-                                                 uint8_t flag, uint16_t t_id)
+                                                 uint8_t flag)
 {
   switch (flag) {
     case FROM_LOG_TOO_LOW_REP:
@@ -115,7 +116,7 @@ inline void commit_rmw(mica_op_t *kv_ptr,
 
   process_commit_flags(rmw, loc_entry, &flag);
   commit_info_t com_info;
-  fil_commit_info_based_on_flag(rmw, loc_entry, &com_info, flag, t_id);
+  fil_commit_info_based_on_flag(rmw, loc_entry, &com_info, flag);
   commit_algorithm(kv_ptr, &com_info, t_id);
 }
 
