@@ -415,6 +415,9 @@ static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
     free_session_from_rmw(loc_entry, cp_core_ctx->stall_info,
                           true, cp_core_ctx->t_id);
   }
+  check_state_with_allowed_flags(3, (int) loc_entry->state, INVALID_RMW,
+                                 MUST_BCAST_COMMITS);
+  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
 }
 
 
@@ -547,15 +550,7 @@ static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
 
 
 
-static inline void clean_up_after_inspecting_accept(loc_entry_t *loc_entry,
-                                                    uint16_t t_id)
-{
-  checks_before_resetting_accept(loc_entry);
-  advance_loc_entry_l_id(loc_entry, t_id);
-  zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-  reset_all_aboard_accept(loc_entry, t_id);
-  check_after_inspecting_accept(loc_entry);
-}
+
 
 
 //------------------------------REGULAR INSPECTIONS------------------------------------------
@@ -754,94 +749,11 @@ static inline void inspect_proposes(cp_core_ctx_t *cp_core_ctx,
 }
 
 
-// Inspect each propose that has gathered a quorum of replies
-static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
-                                   loc_entry_t *loc_entry,
-                                   uint16_t t_id)
-{
-  check_sum_of_reps(loc_entry);
-  if (!loc_entry->rmw_reps.ready_to_inspect) return;
-  loc_entry->rmw_reps.inspected = true;
-  struct rmw_rep_info *rep_info = &loc_entry->rmw_reps;
-  uint8_t remote_quorum = (uint8_t) (loc_entry->all_aboard ?
-                                     MACHINE_NUM : QUORUM_NUM);
-  //uint32_t new_version = 0;
-  if (loc_entry->helping_flag != NOT_HELPING &&
-      rep_info->rmw_id_commited  + rep_info->log_too_small +
-      rep_info->already_accepted + rep_info->seen_higher_prop_acc +
-      rep_info->log_too_high > 0)
-  {
-    if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == HELPING);
-    reinstate_loc_entry_after_helping(loc_entry, t_id);
-
-  }
-    // RMW_ID COMMITTED
-  else if (rep_info->rmw_id_commited > 0) {
-    handle_already_committed_rmw(cp_core_ctx, loc_entry);
-    check_state_with_allowed_flags(3, (int) loc_entry->state, INVALID_RMW,
-                                   MUST_BCAST_COMMITS);
-    if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
-  }
-    // LOG_NO TOO SMALL
-  else if (rep_info->log_too_small > 0) {
-    //It is impossible for this RMW to still hold the kv_ptr
-    loc_entry->state = NEEDS_KV_PTR;
-    if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
-  }
-    // ACK QUORUM
-  else if (rep_info->acks >= remote_quorum) {
-    bookkeeping_after_gathering_accept_acks(loc_entry, t_id);
-    loc_entry->state = (uint8_t) (loc_entry->helping_flag == HELPING ?
-                                  MUST_BCAST_COMMITS_FROM_HELP : MUST_BCAST_COMMITS);
-  }
-    // SEEN HIGHER-TS PROPOSE
-  else if (rep_info->seen_higher_prop_acc > 0) {
-    // retry by incrementing the highest base_ts seen
-    loc_entry->state = RETRY_WITH_BIGGER_TS;
-    loc_entry->new_ts.version = rep_info->seen_higher_prop_version;
-    if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
-  }
-    // LOG TOO HIGH
-  else if (rep_info->log_too_high > 0) {
-    loc_entry->state = RETRY_WITH_BIGGER_TS;
-  }
-    // if a quorum of messages have been received but
-    // we are waiting for more, then we are doing all aboard
-  else if (ENABLE_ALL_ABOARD) {
-    if (ENABLE_ASSERTIONS) assert(loc_entry->all_aboard);
-    loc_entry->all_aboard_time_out++;
-    if (ENABLE_ASSERTIONS) assert(loc_entry->new_ts.version == ALL_ABOARD_TS);
-    if (loc_entry->all_aboard_time_out > ALL_ABOARD_TIMEOUT_CNT) {
-      // printf("Wrkr %u, Timing out on key %u \n", t_id, loc_entry->key.bkt);
-      loc_entry->state = RETRY_WITH_BIGGER_TS;
-      loc_entry->all_aboard_time_out = 0;
-      loc_entry->new_ts.version = PAXOS_TS;
-    }
-    else return; // avoid zeroing out the responses
-  }
-  else if (ENABLE_ASSERTIONS) assert(false);
-
-
-  clean_up_after_inspecting_accept(loc_entry, t_id);
-
-}
 
 
 
-static inline bool inspect_commits(cp_core_ctx_t *cp_core_ctx,
-                                   loc_entry_t* loc_entry)
-{
 
-  loc_entry_t *entry_to_commit =
-      loc_entry->state == MUST_BCAST_COMMITS ? loc_entry : loc_entry->help_loc_entry;
-  bool inserted_commit = cp_com_insert(cp_core_ctx->netw_ctx, entry_to_commit, loc_entry->state);
-  if (inserted_commit) {
-    print_commit_latest_committed(loc_entry, cp_core_ctx->t_id);
-    loc_entry->state = COMMITTED;
-    return true;
-  }
-  return false;
-}
+
 
 // Worker inspects its local RMW entries
 void cp_core_inspect_rmws(cp_core_ctx_t *cp_core_ctx);

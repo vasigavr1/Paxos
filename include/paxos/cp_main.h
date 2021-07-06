@@ -62,7 +62,7 @@ typedef struct rmw_rep_info {
   // then you should not try to help a lower accept, and thus dont try at all
   uint32_t seen_higher_prop_version;
 
-}rmw_rep_info_t;
+} rmw_rep_info_t;
 
 
 

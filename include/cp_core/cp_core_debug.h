@@ -80,6 +80,19 @@ static inline void checks_before_resetting_prop(loc_entry_t *loc_entry)
                                  PROPOSE_LOCALLY_ACCEPTED,
                                  HELP_PREV_COMMITTED_LOG_TOO_HIGH);
 }
+
+
+static inline void check_loc_entry_is_not_helping(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
+}
+
+static inline void check_loc_entry_is_helping(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == HELPING);
+}
+
+
 static inline void check_after_inspecting_accept(loc_entry_t *loc_entry)
 {
 
@@ -718,18 +731,55 @@ static inline void check_find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_ar
 
 }
 
-//static inline void check_()
-//{}
-//
-//static inline void check_()
-//{}
-//
-//static inline void check_()
-//{}
-//
-//static inline void check_()
-//{}
-//
+
+static inline void check_zero_out_the_rmw_reply(loc_entry_t* loc_entry)
+{
+  if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
+    if (loc_entry->help_loc_entry == NULL) {
+      my_printf(red, "When Zeroing: The help_loc_ptr is NULL. The reason is typically that "
+                     "help_loc_entry was passed to the function "
+                     "instead of loc entry to check \n");
+      assert(false);
+    }
+    assert(loc_entry->rmw_reps.ready_to_inspect);
+    assert(loc_entry->rmw_reps.inspected);
+  }
+}
+
+static inline void check_after_zeroing_out_rmw_reply(loc_entry_t* loc_entry)
+{
+  if (ENABLE_ASSERTIONS) assert(!loc_entry->rmw_reps.ready_to_inspect);
+}
+
+static inline void check_reinstate_loc_entry_after_helping(loc_entry_t* loc_entry)
+{
+  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == HELPING);
+}
+
+static inline void check_after_reinstate_loc_entry_after_helping(loc_entry_t* loc_entry,
+                                                                 uint16_t t_id)
+{
+  if (DEBUG_RMW)
+    my_printf(yellow, "Wrkr %u, sess %u reinstates its RMW id %u after helping \n",
+              t_id, loc_entry->sess_id, loc_entry->rmw_id.id);
+  if (ENABLE_ASSERTIONS)
+    assert(glob_ses_id_to_m_id((uint32_t) (loc_entry->rmw_id.id % GLOBAL_SESSION_NUM)) == (uint8_t) machine_id);
+
+}
+
+
+
+static inline void check_after_gathering_acc_acks(loc_entry_t* loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(loc_entry->state != COMMITTED);
+    if (loc_entry->helping_flag == HELPING) assert(!loc_entry->all_aboard);
+    assert(!loc_entry->avoid_val_in_com);
+    assert(!loc_entry->avoid_val_in_com);
+    assert(!loc_entry->help_loc_entry->avoid_val_in_com);
+  }
+}
+
 //static inline void check_()
 //{}
 //

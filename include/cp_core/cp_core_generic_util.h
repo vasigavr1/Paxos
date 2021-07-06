@@ -30,36 +30,23 @@ static inline void unlock_kv_ptr(mica_op_t *kv_ptr, uint16_t t_id)
 //---------------------------------------------------------------------------*/
 static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_entry)
 {
-  if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
-    if (loc_entry->help_loc_entry == NULL) {
-      my_printf(red, "When Zeroing: The help_loc_ptr is NULL. The reason is typically that "
-                     "help_loc_entry was passed to the function "
-                     "instead of loc entry to check \n");
-      assert(false);
-    }
-  }
-  //assert(loc_entry->state != ACCEPTED);
+  check_zero_out_the_rmw_reply(loc_entry);
   loc_entry->help_loc_entry->state = INVALID_RMW;
-  assert(loc_entry->rmw_reps.ready_to_inspect);
-  assert(loc_entry->rmw_reps.inspected);
-  memset(&loc_entry->rmw_reps, 0, sizeof(struct rmw_rep_info));
-  if (ENABLE_ASSERTIONS) assert(!loc_entry->rmw_reps.ready_to_inspect);
+  memset(&loc_entry->rmw_reps, 0, sizeof(rmw_rep_info_t));
+
   loc_entry->back_off_cntr = 0;
   if (ENABLE_ALL_ABOARD) loc_entry->all_aboard_time_out = 0;
+  check_after_zeroing_out_rmw_reply(loc_entry);
 }
 
 
 // After having helped another RMW, bring your own RMW back into the local entry
 static inline void reinstate_loc_entry_after_helping(loc_entry_t *loc_entry, uint16_t t_id)
 {
+  check_reinstate_loc_entry_after_helping(loc_entry);
   loc_entry->state = NEEDS_KV_PTR;
   loc_entry->helping_flag = NOT_HELPING;
-  if (DEBUG_RMW)
-    my_printf(yellow, "Wrkr %u, sess %u reinstates its RMW id %u after helping \n",
-              t_id, loc_entry->sess_id, loc_entry->rmw_id.id);
-  if (ENABLE_ASSERTIONS)
-    assert(glob_ses_id_to_m_id((uint32_t) (loc_entry->rmw_id.id % GLOBAL_SESSION_NUM)) == (uint8_t) machine_id);
-
+  check_after_reinstate_loc_entry_after_helping(loc_entry, t_id);
 }
 
 
@@ -512,24 +499,7 @@ static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
 }
 
 
-static inline void bookkeeping_after_gathering_accept_acks(loc_entry_t *loc_entry, uint16_t t_id)
-{
 
-  if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->state != COMMITTED);
-    if (loc_entry->helping_flag == HELPING) assert(!loc_entry->all_aboard);
-    assert(!loc_entry->avoid_val_in_com);
-    assert(!loc_entry->avoid_val_in_com);
-    assert(!loc_entry->help_loc_entry->avoid_val_in_com);
-  }
-  if (!ENABLE_COMMITS_WITH_NO_VAL) return;
-  // Should we send commits without value?
-  if (loc_entry->rmw_reps.acks == MACHINE_NUM) {
-    if (loc_entry->helping_flag == HELPING)
-      loc_entry->help_loc_entry->avoid_val_in_com = true;
-    else  loc_entry->avoid_val_in_com = true;
-  }
-}
 
 /*--------------------------------------------------------------------------
  * -------------------SENDING MESSAGES-----------------------------------
