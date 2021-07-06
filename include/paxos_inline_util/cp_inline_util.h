@@ -301,7 +301,7 @@ static inline void cp_bookkeep_commits(context_t *ctx)
 static inline void inspect_rmws(context_t *ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
-  rmw_fsm(cp_ctx->cp_core_ctx, ctx->t_id);
+  cp_core_inspect_rmws(cp_ctx->cp_core_ctx);
 }
 
 

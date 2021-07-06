@@ -115,7 +115,8 @@ static inline void check_when_inspecting_rmw(loc_entry_t* loc_entry,
 {
   if (ENABLE_ASSERTIONS) {
     assert(loc_entry->sess_id == sess_i);
-    assert(stall_info->stalled[sess_i]);
+    if (loc_entry->state != INVALID_RMW)
+      assert(stall_info->stalled[sess_i]);
   }
 }
 
