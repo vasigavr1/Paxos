@@ -402,6 +402,7 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
                                                 loc_entry_t *loc_entry)
 {
+  check_handle_already_committed_rmw(loc_entry);
   // Broadcast commits iff you got back you own RMW
   if (!loc_entry->rmw_reps.no_need_to_bcast &&
       (loc_entry->rmw_reps.rmw_id_commited < REMOTE_QUORUM)) {
@@ -419,7 +420,6 @@ static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
   check_state_with_allowed_flags(3, (int) loc_entry->state,
                                  INVALID_RMW,
                                  MUST_BCAST_COMMITS);
-
 }
 
 

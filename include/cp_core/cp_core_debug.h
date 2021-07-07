@@ -863,11 +863,13 @@ static inline void check_inspect_accepts(loc_entry_t *loc_entry)
 }
 
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+static inline void check_handle_already_committed_rmw(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (loc_entry->state == ACCEPTED)
+      check_loc_entry_is_not_helping(loc_entry);
+  }
+}
 //
 //static inline void check_()
 //{
