@@ -531,24 +531,7 @@ static inline void clean_up_after_retrying(sess_stall_t *stall_info,
 
 
 
-static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
-                                                   bool zero_out_log_too_high_cntr,
-                                                   uint16_t t_id)
-{
-  checks_before_resetting_prop(loc_entry);
-  if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
-      loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
-    loc_entry->helping_flag = NOT_HELPING;
 
-  if (loc_entry->rmw_reps.ready_to_inspect)
-    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-  else if (ENABLE_ASSERTIONS) assert(loc_entry->rmw_reps.tot_replies == 1);
-
-  if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
-
-  set_kilalble_flag(loc_entry);
-  check_after_inspecting_prop(loc_entry);
-}
 
 
 
@@ -685,76 +668,15 @@ static inline void handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
 
 }
 
-// Inspect each propose that has gathered a quorum of replies
-static inline void inspect_proposes(cp_core_ctx_t *cp_core_ctx,
-                                    loc_entry_t *loc_entry,
-                                    uint16_t t_id)
-{
-  if (not_ready_to_inspect_propose(loc_entry)) return;
-  loc_entry->stalled_reason = NO_REASON;
-  loc_entry->rmw_reps.inspected = true;
-  advance_loc_entry_l_id(loc_entry, t_id);
-  bool zero_out_log_too_high_cntr = true;
-  struct rmw_rep_info *rep_info = &loc_entry->rmw_reps;
-  uint8_t remote_quorum = QUORUM_NUM;
-
-  // RMW_ID COMMITTED
-  if (rep_info->rmw_id_commited > 0) {
-    debug_fail_help(loc_entry, " rmw id committed", t_id);
-    // as an optimization clear the kv_ptr entry if it is still in proposed state
-    if (loc_entry->accepted_log_no != loc_entry->log_no)
-      free_kv_ptr_if_rmw_failed(loc_entry, PROPOSED, t_id);
-    handle_already_committed_rmw(cp_core_ctx, loc_entry);
-    check_state_with_allowed_flags(3, (int) loc_entry->state, INVALID_RMW,
-                                   MUST_BCAST_COMMITS);
-  }
-    // LOG_NO TOO SMALL
-  else if (rep_info->log_too_small > 0) {
-    debug_fail_help(loc_entry, " log too small", t_id);
-    //It is impossible for this RMW to still hold the kv_ptr
-    loc_entry->state = NEEDS_KV_PTR;
-  }
-    // SEEN HIGHER-TS PROPOSE OR ACCEPT
-  else if (rep_info->seen_higher_prop_acc > 0) {
-    debug_fail_help(loc_entry, " seen higher prop", t_id);
-    // retry by incrementing the highest base_ts seen
-    loc_entry->state = RETRY_WITH_BIGGER_TS;
-    loc_entry->new_ts.version = rep_info->seen_higher_prop_version;
-  }
-    // ACK QUORUM
-  else if (rep_info->acks >= remote_quorum &&
-           loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED) {
-    debug_fail_help(loc_entry, " quorum", t_id);
-    // Quorum of prop acks gathered: send an accept
-    act_on_quorum_of_prop_acks(cp_core_ctx, loc_entry, t_id);
-    check_state_with_allowed_flags(4, (int) loc_entry->state,
-                                   ACCEPTED, NEEDS_KV_PTR, MUST_BCAST_COMMITS);
-  }
-    // ALREADY ACCEPTED AN RMW WITH LOWER_TS
-  else if (rep_info->already_accepted > 0) {
-    debug_fail_help(loc_entry, " already accepted", t_id);
-    if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
-      act_on_quorum_of_prop_acks(cp_core_ctx, loc_entry, t_id);
-    else act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx, loc_entry, t_id);
-    check_state_with_allowed_flags(4, (int) loc_entry->state, ACCEPTED,
-                                   NEEDS_KV_PTR, MUST_BCAST_COMMITS);
-  }
-    // LOG TOO HIGH
-  else if (rep_info->log_too_high > 0) {
-    react_on_log_too_high_for_prop(loc_entry, t_id);
-    loc_entry->new_ts.version = loc_entry->new_ts.version;
-    zero_out_log_too_high_cntr = false;
-  }
-  else if (ENABLE_ASSERTIONS) assert(false);
-
-  clean_up_after_inspecting_props(loc_entry, zero_out_log_too_high_cntr, t_id);
-}
 
 
 
 
+void inspect_props_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                       loc_entry_t *loc_entry);
 
-
+void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                         loc_entry_t *loc_entry);
 
 
 // Worker inspects its local RMW entries

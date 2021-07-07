@@ -459,44 +459,7 @@ static inline bool same_rmw_id_same_ts_and_invalid(mica_op_t *kv_ptr, loc_entry_
 }
 
 
-// Potentially useful (for performance only) when a propose receives already_committed
-// responses and still is holding the kv_ptr
-static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
-                                             uint8_t state, uint16_t t_id)
-{
-  mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  if (kv_ptr->state == state &&
-      kv_ptr->log_no == loc_entry->log_no &&
-      rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
-      compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL) {
-    //    my_printf(cyan, "Wrkr %u, kv_ptr NEEDS TO BE FREED: session %u RMW id %u/%u glob_sess_id %u/%u with version %u/%u,"
-    //                  " m_id %u/%u,"
-    //                  " kv_ptr log/help log %u/%u kv_ptr committed log %u , biggest committed rmw_id %u for glob sess %u"
-    //                  " \n",
-    //                t_id, loc_entry->sess_id, loc_entry->rmw_id.id, kv_ptr->rmw_id.id,
-    //                loc_entry->rmw_id.glob_sess_id, kv_ptr->rmw_id.glob_sess_id,
-    //                loc_entry->new_ts.version, kv_ptr->new_ts.version,
-    //                loc_entry->new_ts.m_id, kv_ptr->new_ts.m_id,
-    //                kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
-    //                committed_glob_sess_rmw_id[kv_ptr->rmw_id.glob_sess_id], kv_ptr->rmw_id.glob_sess_id);
 
-    lock_kv_ptr(loc_entry->kv_ptr, t_id);
-    if (kv_ptr->state == state &&
-        kv_ptr->log_no == loc_entry->log_no &&
-        rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id)) {
-      if (state == PROPOSED && compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL) {
-        printf("Free_kv_ptr_if_prop_already_committed\n");
-        print_rmw_rep_info(loc_entry, t_id);
-        //assert(false);
-        kv_ptr->state = INVALID_RMW;
-      }
-      else if (state == ACCEPTED && compare_ts(&kv_ptr->accepted_ts, &loc_entry->new_ts) == EQUAL)
-        if (ENABLE_ASSERTIONS) assert(false);
-    }
-    check_log_nos_of_kv_ptr(kv_ptr, "free_kv_ptr_if_prop_failed", t_id);
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-  }
-}
 
 
 
