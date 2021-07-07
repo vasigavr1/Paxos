@@ -73,16 +73,15 @@ static inline bool acc_handle_all_aboard(loc_entry_t *loc_entry,
 {
   check_handle_all_aboard(loc_entry);
   loc_entry->all_aboard_time_out++;
-  if (loc_entry->all_aboard_time_out > ALL_ABOARD_TIMEOUT_CNT) {
+  if (loc_entry->all_aboard_time_out < ALL_ABOARD_TIMEOUT_CNT)
+    return true;
+  else {
     print_all_aboard_time_out(loc_entry, t_id);
-
     loc_entry->state = RETRY_WITH_BIGGER_TS;
     loc_entry->all_aboard_time_out = 0;
     loc_entry->new_ts.version = PAXOS_TS;
-    return true;
+    return false;
   }
-  else return false;
-
 }
 
 static inline bool acc_has_received_ack_quorum(loc_entry_t *loc_entry)
@@ -122,9 +121,15 @@ static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
   check_inspect_accepts(loc_entry);
   loc_entry->rmw_reps.inspected = true;
 
-  bool handled = handle_quorum_of_acc_reps(cp_core_ctx, loc_entry);
-  handled = acc_handle_all_aboard(loc_entry, cp_core_ctx->t_id);
-  if (handled) clean_up_after_inspecting_accept(loc_entry, cp_core_ctx->t_id);
+  bool was_quorum_of_answers_sufficient =
+      handle_quorum_of_acc_reps(cp_core_ctx, loc_entry);
+
+  bool need_to_wait_for_more_reps = false;
+  if (!was_quorum_of_answers_sufficient)
+    need_to_wait_for_more_reps = acc_handle_all_aboard(loc_entry, cp_core_ctx->t_id);
+
+  if (!need_to_wait_for_more_reps)
+    clean_up_after_inspecting_accept(loc_entry, cp_core_ctx->t_id);
 
 }
 
