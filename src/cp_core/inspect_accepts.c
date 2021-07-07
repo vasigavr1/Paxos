@@ -68,7 +68,7 @@ static inline void acc_handle_log_too_high(loc_entry_t *loc_entry)
   loc_entry->state = RETRY_WITH_BIGGER_TS;
 }
 
-static inline void acc_handle_all_aboard(loc_entry_t *loc_entry,
+static inline bool acc_handle_all_aboard(loc_entry_t *loc_entry,
                                          uint16_t t_id)
 {
   check_handle_all_aboard(loc_entry);
@@ -79,7 +79,10 @@ static inline void acc_handle_all_aboard(loc_entry_t *loc_entry,
     loc_entry->state = RETRY_WITH_BIGGER_TS;
     loc_entry->all_aboard_time_out = 0;
     loc_entry->new_ts.version = PAXOS_TS;
+    return true;
   }
+  else return false;
+
 }
 
 static inline bool acc_has_received_ack_quorum(loc_entry_t *loc_entry)
@@ -120,8 +123,9 @@ static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
   loc_entry->rmw_reps.inspected = true;
 
   bool handled = handle_quorum_of_acc_reps(cp_core_ctx, loc_entry);
+  handled = acc_handle_all_aboard(loc_entry, cp_core_ctx->t_id);
   if (handled) clean_up_after_inspecting_accept(loc_entry, cp_core_ctx->t_id);
-  else acc_handle_all_aboard(loc_entry, cp_core_ctx->t_id);
+
 }
 
 inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
