@@ -396,53 +396,6 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 }
 
 
-//------------------------------ALREADY-COMMITTED------------------------------------------
-
-
-
-
-
-
-
-//------------------------------ACKS------------------------------------------
-// If a quorum of proposal acks have been gathered, try to broadcast accepts
-static inline void act_on_quorum_of_prop_acks(cp_core_ctx_t *cp_core_ctx,
-                                              loc_entry_t *loc_entry,
-                                              uint16_t t_id)
-{
-  // first we need to accept locally,
-  attempt_local_accept(loc_entry, t_id);
-  checks_acting_on_quorum_of_prop_ack(loc_entry, t_id);
-
-  if (loc_entry->state == ACCEPTED) {
-    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-    local_rmw_ack(loc_entry);
-    check_loc_entry_metadata_is_reset(loc_entry, "act_on_quorum_of_prop_acks", t_id);
-    cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry, false);
-    loc_entry->killable = false;
-  }
-}
-
-
-
-
-
-//------------------------------SEEN-LOWER_ACCEPT------------------------------------------
-// When a quorum of prop replies have been received, and one of the replies says it has accepted an RMW with lower TS
-static inline void act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx_t *cp_core_ctx,
-                                                                 loc_entry_t* loc_entry,
-                                                                 uint16_t t_id)
-{
-  checks_acting_on_already_accepted_rep(loc_entry, t_id);
-  attempt_local_accept_to_help(loc_entry, t_id);
-  if (loc_entry->state == ACCEPTED) {
-    loc_entry->helping_flag = HELPING;
-    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-    local_rmw_ack(loc_entry);
-    cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry->help_loc_entry, true);
-  }
-
-}
 
 
 //------------------------------LOG-TOO_HIGH------------------------------------------

@@ -79,7 +79,7 @@ static inline void cp_fill_prop(cp_prop_t *prop,
                                 loc_entry_t *loc_entry,
                                 uint16_t t_id)
 {
-  check_loc_entry_metadata_is_reset(loc_entry, "insert_prop_to_read_fifo", t_id);
+  check_loc_entry_metadata_is_reset(loc_entry, "inserting prop", t_id);
   assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
   memcpy(&prop->key, (void *)&loc_entry->key, KEY_SIZE);
   prop->opcode = PROPOSE_OP;
@@ -99,7 +99,7 @@ static inline void cp_fill_acc(cp_acc_t *acc,
                                bool helping,
                                uint16_t t_id)
 {
-  check_loc_entry_metadata_is_reset(loc_entry, "insert_accept_in_writes_message_fifo", t_id);
+  check_loc_entry_metadata_is_reset(loc_entry, "inserting_accept", t_id);
   if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED);
   if (DEBUG_RMW) {
     my_printf(yellow, "Wrkr %u Inserting an accept, l_id %lu, "
@@ -256,7 +256,6 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
 }
 
 
-// Apply the acks that refer to stored writes
 static inline void cp_apply_acks(context_t *ctx,
                                  ctx_ack_mes_t *ack)
 {

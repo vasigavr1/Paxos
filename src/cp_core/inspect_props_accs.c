@@ -184,6 +184,42 @@ inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
  * ----PROPOSES----
  **/
 
+static inline void bookkeep_if_loc_entry_is_accepted(cp_core_ctx_t *cp_core_ctx,
+                                                     loc_entry_t* loc_entry,
+                                                     bool helping)
+{
+  if (loc_entry->state == ACCEPTED) {
+    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
+    local_rmw_ack(loc_entry);
+    if (helping) loc_entry->helping_flag = HELPING;
+    else loc_entry->killable = false;
+    cp_acc_insert(cp_core_ctx->netw_ctx,
+                  helping? loc_entry->help_loc_entry : loc_entry,
+                  helping);
+
+  }
+}
+
+static inline void act_on_quorum_of_prop_acks(cp_core_ctx_t *cp_core_ctx,
+                                              loc_entry_t *loc_entry,
+                                              uint16_t t_id)
+{
+  attempt_local_accept(loc_entry, t_id);
+  checks_acting_on_quorum_of_prop_ack(loc_entry, t_id);
+  bookkeep_if_loc_entry_is_accepted(cp_core_ctx, loc_entry, false);
+}
+
+static inline void act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx_t *cp_core_ctx,
+                                                                 loc_entry_t* loc_entry,
+                                                                 uint16_t t_id)
+{
+  checks_acting_on_already_accepted_rep(loc_entry, t_id);
+  attempt_local_accept_to_help(loc_entry, t_id);
+  bookkeep_if_loc_entry_is_accepted(cp_core_ctx, loc_entry, true);
+}
+
+
+
 static inline void zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry_t *loc_entry)
 {
   bool reps_have_not_been_zeroed = loc_entry->rmw_reps.ready_to_inspect;
