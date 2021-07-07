@@ -259,33 +259,34 @@ static inline void prop_handle_ack_quorum(cp_core_ctx_t *cp_core_ctx,
                                  ACCEPTED, NEEDS_KV_PTR, MUST_BCAST_COMMITS);
 }
 
+static inline void fill_help_loc_entry_to_bcast_after_log_too_high(loc_entry_t *loc_entry,
+                                                                   uint16_t t_id)
+{
+  mica_op_t *kv_ptr = loc_entry->kv_ptr;
+
+  lock_kv_ptr(kv_ptr, t_id);
+  {
+    loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
+    loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+    memcpy(help_loc_entry->value_to_write, kv_ptr->value, (size_t) VALUE_SIZE);
+    help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
+    loc_entry->help_loc_entry->log_no = kv_ptr->last_committed_log_no;
+    help_loc_entry->base_ts = kv_ptr->ts;
+  }
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+
+  loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
+  loc_entry->help_loc_entry->key = loc_entry->key;
+}
 
 static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
                                                   uint16_t t_id)
 {
-
   loc_entry->log_too_high_cntr++;
   bool time_out_expired = loc_entry->log_too_high_cntr == LOG_TOO_HIGH_TIME_OUT;
   if (time_out_expired) {
     print_log_too_high_timeout(loc_entry, t_id);
-    //if_no_other_rmw_has_been_committed
-    mica_op_t *kv_ptr = loc_entry->kv_ptr;
-    lock_kv_ptr(kv_ptr, t_id);
-    //if (kv_ptr->last_committed_log_no + 1 == loc_entry->log_no) {
-      loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
-      loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
-      memcpy(help_loc_entry->value_to_write, kv_ptr->value, (size_t) VALUE_SIZE);
-      help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
-      help_loc_entry->base_ts = kv_ptr->ts;
-    //}
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-
-    //if (unlikely(loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP)) {
-      loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
-      loc_entry->help_loc_entry->log_no = loc_entry->log_no - 1;
-      loc_entry->help_loc_entry->key = loc_entry->key;
-    //}
-
+    fill_help_loc_entry_to_bcast_after_log_too_high(loc_entry, t_id);
     loc_entry->log_too_high_cntr = 0;
   }
 }
