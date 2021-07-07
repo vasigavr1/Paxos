@@ -791,11 +791,27 @@ static inline void check_after_gathering_acc_acks(loc_entry_t* loc_entry)
   }
 }
 
-//static inline void check_()
-//{}
-//
-//static inline void check_()
-//{}
+static inline void check_that_a_nack_is_received(bool received_nack,
+                                                 rmw_rep_info_t * rep_info)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (received_nack)
+      assert(rep_info->rmw_id_commited > 0 || rep_info->log_too_small > 0 ||
+             rep_info->already_accepted > 0 || rep_info->seen_higher_prop_acc > 0 ||
+             rep_info->log_too_high > 0);
+  }
+}
+
+
+static inline void check_that_if_nack_and_helping_flag_is_helping(bool is_helping,
+                                                                  bool received_a_nack,
+                                                                  loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (is_helping && received_a_nack)
+      check_loc_entry_help_flag_is(loc_entry, HELPING);
+  }
+}
 //
 //static inline void check_()
 //{}

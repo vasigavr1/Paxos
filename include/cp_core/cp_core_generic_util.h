@@ -43,7 +43,7 @@ static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_en
 // After having helped another RMW, bring your own RMW back into the local entry
 static inline void reinstate_loc_entry_after_helping(loc_entry_t *loc_entry, uint16_t t_id)
 {
-  check_reinstate_loc_entry_after_helping(loc_entry);
+  check_loc_entry_is_helping(loc_entry);
   loc_entry->state = NEEDS_KV_PTR;
   loc_entry->helping_flag = NOT_HELPING;
   check_after_reinstate_loc_entry_after_helping(loc_entry, t_id);

@@ -17,10 +17,14 @@ static inline void clean_up_after_inspecting_accept(loc_entry_t *loc_entry,
 static inline bool help_is_nacked(loc_entry_t *loc_entry)
 {
   rmw_rep_info_t *rep_info = &loc_entry->rmw_reps;
-  return loc_entry->helping_flag != NOT_HELPING && (
-         rep_info->rmw_id_commited  + rep_info->log_too_small +
-         rep_info->already_accepted + rep_info->seen_higher_prop_acc +
-         rep_info->log_too_high > 0);
+  bool is_helping = loc_entry->helping_flag != NOT_HELPING;
+  bool received_a_nack = rep_info->rmw_id_commited + rep_info->log_too_small +
+                         rep_info->already_accepted + rep_info->seen_higher_prop_acc +
+                         rep_info->log_too_high > 0;
+  check_that_a_nack_is_received(received_a_nack, rep_info);
+  check_that_if_nack_and_helping_flag_is_helping(is_helping, received_a_nack, loc_entry);
+
+  return is_helping && received_a_nack;
 }
 
 static inline void avoid_values_in_commits_if_possible(loc_entry_t *loc_entry)
