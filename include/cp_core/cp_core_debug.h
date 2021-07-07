@@ -81,17 +81,28 @@ static inline void checks_before_resetting_prop(loc_entry_t *loc_entry)
                                  HELP_PREV_COMMITTED_LOG_TOO_HIGH);
 }
 
+static inline void check_loc_entry_help_flag_is(loc_entry_t *loc_entry,
+                                                uint8_t expected_state)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (loc_entry->helping_flag != expected_state){
+      my_printf(red,"Expecting helping flag to be %s, flag is %s \n",
+                help_state_to_str(expected_state),
+                help_state_to_str(loc_entry->helping_flag));
+      assert(false);
+    }
+  }
+}
 
 static inline void check_loc_entry_is_not_helping(loc_entry_t *loc_entry)
 {
-  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == NOT_HELPING);
+  check_loc_entry_help_flag_is(loc_entry, NOT_HELPING);
 }
 
 static inline void check_loc_entry_is_helping(loc_entry_t *loc_entry)
 {
-  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == HELPING);
+  check_loc_entry_help_flag_is(loc_entry, HELPING);
 }
-
 
 static inline void check_after_inspecting_accept(loc_entry_t *loc_entry)
 {
@@ -753,7 +764,7 @@ static inline void check_after_zeroing_out_rmw_reply(loc_entry_t* loc_entry)
 
 static inline void check_reinstate_loc_entry_after_helping(loc_entry_t* loc_entry)
 {
-  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag == HELPING);
+  check_loc_entry_is_helping(loc_entry);
 }
 
 static inline void check_after_reinstate_loc_entry_after_helping(loc_entry_t* loc_entry,

@@ -53,10 +53,8 @@ static inline void handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
                                      MACHINE_NUM : QUORUM_NUM);
   if (help_is_nacked(loc_entry))
     reinstate_loc_entry_after_helping(loc_entry, t_id);
-    // RMW_ID COMMITTED
   else if (rep_info->rmw_id_commited > 0)
     handle_already_committed_rmw(cp_core_ctx, loc_entry);
-    // LOG_NO TOO SMALL
   else if (rep_info->log_too_small > 0) {
     //It is impossible for this RMW to still hold the kv_ptr
     loc_entry->state = NEEDS_KV_PTR;
