@@ -419,7 +419,7 @@ static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
   check_state_with_allowed_flags(3, (int) loc_entry->state,
                                  INVALID_RMW,
                                  MUST_BCAST_COMMITS);
-  check_loc_entry_is_not_helping(loc_entry);
+
 }
 
 

@@ -93,8 +93,10 @@ static inline bool handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
                                      MACHINE_NUM : QUORUM_NUM);
   if (help_is_nacked(loc_entry))
     reinstate_loc_entry_after_helping(loc_entry, cp_core_ctx->t_id);
-  else if (rep_info->rmw_id_commited > 0)
+  else if (rep_info->rmw_id_commited > 0) {
     handle_already_committed_rmw(cp_core_ctx, loc_entry);
+    check_loc_entry_is_not_helping(loc_entry);
+  }
   else if (rep_info->log_too_small > 0)
     handle_log_too_small(loc_entry);
   else if (rep_info->acks >= remote_quorum)
