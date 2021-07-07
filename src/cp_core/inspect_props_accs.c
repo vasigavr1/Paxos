@@ -4,20 +4,28 @@
 
 #include <cp_core_util.h>
 
+static inline bool set_up_broadcast_already_committed_if_needed(loc_entry_t *loc_entry)
+{
+  bool will_broadcast = !loc_entry->rmw_reps.no_need_to_bcast &&
+                          (loc_entry->rmw_reps.rmw_id_commited < REMOTE_QUORUM);
+
+  if (will_broadcast) {
+    loc_entry->log_no = loc_entry->accepted_log_no;
+    loc_entry->state = MUST_BCAST_COMMITS;
+    check_bcasting_after_rmw_already_committed();
+  }
+
+  return will_broadcast;
+}
+
 static inline void prop_acc_handle_already_committed(cp_core_ctx_t *cp_core_ctx,
                                                      loc_entry_t *loc_entry)
 {
   check_if_accepted_cannot_be_helping(loc_entry);
 
-  bool should_broadcast = !loc_entry->rmw_reps.no_need_to_bcast &&
-                          (loc_entry->rmw_reps.rmw_id_commited < REMOTE_QUORUM);
+ bool will_broadcast = set_up_broadcast_already_committed_if_needed(loc_entry);
 
-  if (should_broadcast) {
-    loc_entry->log_no = loc_entry->accepted_log_no;
-    loc_entry->state = MUST_BCAST_COMMITS;
-    check_bcasting_after_rmw_already_committed();
-  }
-  else {
+  if (!will_broadcast) {
     loc_entry->state = INVALID_RMW;
     free_session_from_rmw(loc_entry, cp_core_ctx->stall_info,
                           true, cp_core_ctx->t_id);
@@ -176,22 +184,28 @@ inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
  * ----PROPOSES----
  **/
 
-
-static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
-                                                   bool zero_out_log_too_high_cntr,
-                                                   uint16_t t_id)
+static inline void zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry_t *loc_entry)
 {
-  checks_before_resetting_prop(loc_entry);
+  bool reps_have_not_been_zeroed = loc_entry->rmw_reps.ready_to_inspect;
+  if (reps_have_not_been_zeroed)
+    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
+  else check_when_reps_have_been_zeroes_on_prop(loc_entry);
+}
+
+static inline void reset_helping_flag(loc_entry_t *loc_entry)
+{
   if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
       loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
     loc_entry->helping_flag = NOT_HELPING;
+}
 
-  if (loc_entry->rmw_reps.ready_to_inspect)
-    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-  else if (ENABLE_ASSERTIONS) assert(loc_entry->rmw_reps.tot_replies == 1);
-
+static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
+                                                   bool zero_out_log_too_high_cntr)
+{
+  checks_before_resetting_prop(loc_entry);
+  reset_helping_flag(loc_entry);
+  zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry);
   if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
-
   set_kilalble_flag(loc_entry);
   check_after_inspecting_prop(loc_entry);
 }
@@ -268,7 +282,7 @@ static inline void inspect_proposes(cp_core_ctx_t *cp_core_ctx,
 
   bool zero_out_log_too_high_cntr = true;
   handle_quorum_of_prop_reps(cp_core_ctx, loc_entry, &zero_out_log_too_high_cntr);
-  clean_up_after_inspecting_props(loc_entry, zero_out_log_too_high_cntr, t_id);
+  clean_up_after_inspecting_props(loc_entry, zero_out_log_too_high_cntr);
 }
 
 

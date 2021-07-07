@@ -878,13 +878,15 @@ static inline void check_bcasting_after_rmw_already_committed()
     assert(MACHINE_NUM > 3);
   }
 }
-//
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
-//
+
+static inline void check_when_reps_have_been_zeroes_on_prop(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(loc_entry->rmw_reps.tot_replies == 1);
+    assert(loc_entry->state == ACCEPTED);
+  }
+}
+
 //static inline void check_()
 //{
 //  if (ENABLE_ASSERTIONS) {
