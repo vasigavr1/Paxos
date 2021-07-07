@@ -11,20 +11,15 @@ static inline void free_kv_ptr_if_rmw_failed(loc_entry_t *loc_entry,
                                              uint8_t state, uint16_t t_id)
 {
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
-  if (kv_ptr->state == state &&
+  bool kv_ptr_is_still_proposed_for_same_rmw =
+      kv_ptr->state == state &&
       kv_ptr->log_no == loc_entry->log_no &&
       rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
-      compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL) {
-    //    my_printf(cyan, "Wrkr %u, kv_ptr NEEDS TO BE FREED: session %u RMW id %u/%u glob_sess_id %u/%u with version %u/%u,"
-    //                  " m_id %u/%u,"
-    //                  " kv_ptr log/help log %u/%u kv_ptr committed log %u , biggest committed rmw_id %u for glob sess %u"
-    //                  " \n",
-    //                t_id, loc_entry->sess_id, loc_entry->rmw_id.id, kv_ptr->rmw_id.id,
-    //                loc_entry->rmw_id.glob_sess_id, kv_ptr->rmw_id.glob_sess_id,
-    //                loc_entry->new_ts.version, kv_ptr->new_ts.version,
-    //                loc_entry->new_ts.m_id, kv_ptr->new_ts.m_id,
-    //                kv_ptr->log_no, loc_entry->log_no, kv_ptr->last_committed_log_no,
-    //                committed_glob_sess_rmw_id[kv_ptr->rmw_id.glob_sess_id], kv_ptr->rmw_id.glob_sess_id);
+      compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL;
+  if (kv_ptr_is_still_proposed_for_same_rmw) {
+    assert(false);
+
+    print_free_kv_ptr_if_rmw_failed(loc_entry, state, t_id);
 
     lock_kv_ptr(loc_entry->kv_ptr, t_id);
     if (kv_ptr->state == state &&
