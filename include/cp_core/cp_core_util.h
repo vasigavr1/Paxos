@@ -398,29 +398,8 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 
 //------------------------------ALREADY-COMMITTED------------------------------------------
 
-//When inspecting an accept/propose and have received already-committed Response
-static inline void handle_already_committed_rmw(cp_core_ctx_t *cp_core_ctx,
-                                                loc_entry_t *loc_entry)
-{
-  check_handle_already_committed_rmw(loc_entry);
-  // Broadcast commits iff you got back you own RMW
-  if (!loc_entry->rmw_reps.no_need_to_bcast &&
-      (loc_entry->rmw_reps.rmw_id_commited < REMOTE_QUORUM)) {
-    // Here we know the correct value/log to broadcast: it's the locally accepted ones
-    loc_entry->log_no = loc_entry->accepted_log_no;
-    loc_entry->state = MUST_BCAST_COMMITS;
-    if (MACHINE_NUM <= 3 && ENABLE_ASSERTIONS) assert(false);
-  }
-  else {
-    //free the session here as well
-    loc_entry->state = INVALID_RMW;
-    free_session_from_rmw(loc_entry, cp_core_ctx->stall_info,
-                          true, cp_core_ctx->t_id);
-  }
-  check_state_with_allowed_flags(3, (int) loc_entry->state,
-                                 INVALID_RMW,
-                                 MUST_BCAST_COMMITS);
-}
+
+
 
 
 
