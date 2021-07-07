@@ -400,37 +400,7 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 
 //------------------------------LOG-TOO_HIGH------------------------------------------
 
-static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
-                                                  uint16_t t_id)
-{
-  loc_entry->state = RETRY_WITH_BIGGER_TS;
-  loc_entry->log_too_high_cntr++;
-  if (loc_entry->log_too_high_cntr == LOG_TOO_HIGH_TIME_OUT) {
-    if (ENABLE_ASSERTIONS) {
-      my_printf(red, "Timed out on log_too-high\n",
-                t_id, loc_entry->sess_id);
-      print_loc_entry(loc_entry, yellow, t_id);
-    }
-    mica_op_t *kv_ptr = loc_entry->kv_ptr;
-    lock_kv_ptr(kv_ptr, t_id);
-    if (kv_ptr->last_committed_log_no + 1 == loc_entry->log_no) {
-      loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
-      loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
-      memcpy(help_loc_entry->value_to_write, kv_ptr->value, (size_t) VALUE_SIZE);
-      help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
-      help_loc_entry->base_ts = kv_ptr->ts;
-    }
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
 
-    if (unlikely(loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP)) {
-      loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
-      loc_entry->help_loc_entry->log_no = loc_entry->log_no - 1;
-      loc_entry->help_loc_entry->key = loc_entry->key;
-    }
-
-    loc_entry->log_too_high_cntr = 0;
-  }
-}
 
 
 //------------------------------CLEAN-UP------------------------------------------

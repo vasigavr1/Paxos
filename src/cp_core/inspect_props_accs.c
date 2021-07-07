@@ -184,6 +184,36 @@ inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
  * ----PROPOSES----
  **/
 
+
+
+
+
+static inline void zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry_t *loc_entry)
+{
+  bool reps_have_not_been_zeroed = loc_entry->rmw_reps.ready_to_inspect;
+  if (reps_have_not_been_zeroed)
+    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
+  else check_when_reps_have_been_zeroes_on_prop(loc_entry);
+}
+
+static inline void reset_helping_flag(loc_entry_t *loc_entry)
+{
+  if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
+      loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
+    loc_entry->helping_flag = NOT_HELPING;
+}
+
+static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
+                                                   bool zero_out_log_too_high_cntr)
+{
+  checks_before_resetting_prop(loc_entry);
+  reset_helping_flag(loc_entry);
+  zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry);
+  if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
+  set_kilalble_flag(loc_entry);
+  check_after_inspecting_prop(loc_entry);
+}
+
 static inline void bookkeep_if_loc_entry_is_accepted(cp_core_ctx_t *cp_core_ctx,
                                                      loc_entry_t* loc_entry,
                                                      bool helping)
@@ -220,32 +250,6 @@ static inline void act_on_receiving_already_accepted_rep_to_prop(cp_core_ctx_t *
 
 
 
-static inline void zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry_t *loc_entry)
-{
-  bool reps_have_not_been_zeroed = loc_entry->rmw_reps.ready_to_inspect;
-  if (reps_have_not_been_zeroed)
-    zero_out_the_rmw_reply_loc_entry_metadata(loc_entry);
-  else check_when_reps_have_been_zeroes_on_prop(loc_entry);
-}
-
-static inline void reset_helping_flag(loc_entry_t *loc_entry)
-{
-  if (loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED ||
-      loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED)
-    loc_entry->helping_flag = NOT_HELPING;
-}
-
-static inline void clean_up_after_inspecting_props(loc_entry_t *loc_entry,
-                                                   bool zero_out_log_too_high_cntr)
-{
-  checks_before_resetting_prop(loc_entry);
-  reset_helping_flag(loc_entry);
-  zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry);
-  if (zero_out_log_too_high_cntr) loc_entry->log_too_high_cntr = 0;
-  set_kilalble_flag(loc_entry);
-  check_after_inspecting_prop(loc_entry);
-}
-
 static inline void prop_handle_ack_quorum(cp_core_ctx_t *cp_core_ctx,
                                           loc_entry_t *loc_entry)
 {
@@ -256,10 +260,41 @@ static inline void prop_handle_ack_quorum(cp_core_ctx_t *cp_core_ctx,
 }
 
 
+static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
+                                                  uint16_t t_id)
+{
+
+  loc_entry->log_too_high_cntr++;
+  bool time_out_expired = loc_entry->log_too_high_cntr == LOG_TOO_HIGH_TIME_OUT;
+  if (time_out_expired) {
+    print_log_too_high_timeout(loc_entry, t_id);
+    //if_no_other_rmw_has_been_committed
+    mica_op_t *kv_ptr = loc_entry->kv_ptr;
+    lock_kv_ptr(kv_ptr, t_id);
+    //if (kv_ptr->last_committed_log_no + 1 == loc_entry->log_no) {
+      loc_entry->state = MUST_BCAST_COMMITS_FROM_HELP;
+      loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+      memcpy(help_loc_entry->value_to_write, kv_ptr->value, (size_t) VALUE_SIZE);
+      help_loc_entry->rmw_id = kv_ptr->last_committed_rmw_id;
+      help_loc_entry->base_ts = kv_ptr->ts;
+    //}
+    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+
+    //if (unlikely(loc_entry->state == MUST_BCAST_COMMITS_FROM_HELP)) {
+      loc_entry->helping_flag = HELP_PREV_COMMITTED_LOG_TOO_HIGH;
+      loc_entry->help_loc_entry->log_no = loc_entry->log_no - 1;
+      loc_entry->help_loc_entry->key = loc_entry->key;
+    //}
+
+    loc_entry->log_too_high_cntr = 0;
+  }
+}
+
 static inline void prop_handle_log_too_high(loc_entry_t *loc_entry,
                                             bool *zero_out_log_too_high_cntr,
                                             uint16_t t_id)
 {
+  loc_entry->state = RETRY_WITH_BIGGER_TS;
   react_on_log_too_high_for_prop(loc_entry, t_id);
   loc_entry->new_ts.version = loc_entry->new_ts.version;
   *zero_out_log_too_high_cntr = false;

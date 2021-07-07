@@ -887,12 +887,16 @@ static inline void check_when_reps_have_been_zeroes_on_prop(loc_entry_t *loc_ent
   }
 }
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
-//
+static inline void print_log_too_high_timeout(loc_entry_t *loc_entry,
+                                              uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    my_printf(red, "Timed out on log_too-high\n",
+              t_id, loc_entry->sess_id);
+    print_loc_entry(loc_entry, yellow, t_id);
+  }
+}
+
 //static inline void check_()
 //{
 //  if (ENABLE_ASSERTIONS) {
