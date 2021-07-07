@@ -44,6 +44,13 @@ static inline void go_to_bcast_state_after_gathering_accept_acks(loc_entry_t *lo
 }
 
 
+static inline void handle_log_too_small(loc_entry_t *loc_entry)
+{
+  //It is impossible for this RMW to still hold the kv_ptr
+  loc_entry->state = NEEDS_KV_PTR;
+  check_loc_entry_is_not_helping(loc_entry);
+}
+
 static inline void handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
                                              loc_entry_t *loc_entry,
                                              uint16_t t_id)
@@ -55,12 +62,8 @@ static inline void handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
     reinstate_loc_entry_after_helping(loc_entry, t_id);
   else if (rep_info->rmw_id_commited > 0)
     handle_already_committed_rmw(cp_core_ctx, loc_entry);
-  else if (rep_info->log_too_small > 0) {
-    //It is impossible for this RMW to still hold the kv_ptr
-    loc_entry->state = NEEDS_KV_PTR;
-    check_loc_entry_is_not_helping(loc_entry);
-  }
-    // ACK QUORUM
+  else if (rep_info->log_too_small > 0)
+    handle_log_too_small(loc_entry);
   else if (rep_info->acks >= remote_quorum)
     go_to_bcast_state_after_gathering_accept_acks(loc_entry, t_id);
 
