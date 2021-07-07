@@ -243,7 +243,8 @@ void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
 static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *stall_info,
                                                                  mica_op_t  *kv_ptr,
                                                                  loc_entry_t *loc_entry,
-                                                                 bool help_myself, uint16_t t_id)
+                                                                 bool help_myself,
+                                                                 uint16_t t_id)
 {
   checks_and_prints_proposed_but_not_locally_acked(stall_info, kv_ptr, loc_entry, t_id);
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;

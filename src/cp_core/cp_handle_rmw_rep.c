@@ -8,6 +8,9 @@ static inline void overwrite_help_loc_entry(loc_entry_t* loc_entry,
                                             cp_rmw_rep_t* prop_rep)
 {
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+  // if the highest accept we have seen was our own, we were at state PROPOSE_LOCALLY_ACCEPTED,
+  //if a highest lower-accept is received, then we need to help that one, and thus transition out from
+  // the PROPOSE_LOCALLY_ACCEPTED state
   if (loc_entry->helping_flag == PROPOSE_LOCALLY_ACCEPTED) loc_entry->helping_flag = NOT_HELPING;
   assign_netw_ts_to_ts(&help_loc_entry->new_ts, &prop_rep->ts);
   help_loc_entry->base_ts.version = prop_rep->log_no_or_base_version;

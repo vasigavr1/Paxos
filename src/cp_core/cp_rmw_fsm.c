@@ -4,6 +4,7 @@
 
 #include <cp_core_util.h>
 
+
 static inline void clean_up_after_inspecting_accept(loc_entry_t *loc_entry,
                                                     uint16_t t_id)
 {
@@ -47,7 +48,6 @@ static inline void go_to_bcast_state_after_gathering_accept_acks(loc_entry_t *lo
   avoid_values_in_commits_if_possible(loc_entry);
 }
 
-
 static inline void handle_log_too_small(loc_entry_t *loc_entry)
 {
   //It is impossible for this RMW to still hold the kv_ptr
@@ -55,64 +55,78 @@ static inline void handle_log_too_small(loc_entry_t *loc_entry)
   check_loc_entry_is_not_helping(loc_entry);
 }
 
-static inline void handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
-                                             loc_entry_t *loc_entry,
-                                             uint16_t t_id)
+static inline void handle_seen_higher_prop(loc_entry_t *loc_entry)
 {
+  // retry by incrementing the highest base_ts seen
+  loc_entry->state = RETRY_WITH_BIGGER_TS;
+  loc_entry->new_ts.version = loc_entry->rmw_reps.seen_higher_prop_version;
+  check_loc_entry_is_not_helping(loc_entry);
+}
+
+static inline void handle_log_too_high(loc_entry_t *loc_entry)
+{
+  //on an accept we do not try to commit the previous RMW
+  loc_entry->state = RETRY_WITH_BIGGER_TS;
+}
+
+static inline void handle_all_aboard(loc_entry_t *loc_entry,
+                                     uint16_t t_id)
+{
+  check_handle_all_aboard(loc_entry);
+  loc_entry->all_aboard_time_out++;
+  if (loc_entry->all_aboard_time_out > ALL_ABOARD_TIMEOUT_CNT) {
+    print_all_aboard_time_out(loc_entry, t_id);
+
+    loc_entry->state = RETRY_WITH_BIGGER_TS;
+    loc_entry->all_aboard_time_out = 0;
+    loc_entry->new_ts.version = PAXOS_TS;
+  }
+}
+
+
+static inline bool handle_quorum_of_acc_reps(cp_core_ctx_t *cp_core_ctx,
+                                             loc_entry_t *loc_entry)
+{
+
   rmw_rep_info_t *rep_info = &loc_entry->rmw_reps;
   uint8_t remote_quorum = (uint8_t) (loc_entry->all_aboard ?
                                      MACHINE_NUM : QUORUM_NUM);
   if (help_is_nacked(loc_entry))
-    reinstate_loc_entry_after_helping(loc_entry, t_id);
+    reinstate_loc_entry_after_helping(loc_entry, cp_core_ctx->t_id);
   else if (rep_info->rmw_id_commited > 0)
     handle_already_committed_rmw(cp_core_ctx, loc_entry);
   else if (rep_info->log_too_small > 0)
     handle_log_too_small(loc_entry);
   else if (rep_info->acks >= remote_quorum)
-    go_to_bcast_state_after_gathering_accept_acks(loc_entry, t_id);
+    go_to_bcast_state_after_gathering_accept_acks(loc_entry, cp_core_ctx->t_id);
+  else if (rep_info->seen_higher_prop_acc > 0)
+    handle_seen_higher_prop(loc_entry);
+  else if (rep_info->log_too_high > 0)
+    handle_log_too_high(loc_entry);
+  else return false;
 
-    // SEEN HIGHER-TS PROPOSE
-  else if (rep_info->seen_higher_prop_acc > 0) {
-    // retry by incrementing the highest base_ts seen
-    loc_entry->state = RETRY_WITH_BIGGER_TS;
-    loc_entry->new_ts.version = rep_info->seen_higher_prop_version;
-    check_loc_entry_is_not_helping(loc_entry);
-  }
-    // LOG TOO HIGH
-  else if (rep_info->log_too_high > 0) {
-    loc_entry->state = RETRY_WITH_BIGGER_TS;
-  }
-    // if a quorum of messages have been received but
-    // we are waiting for more, then we are doing all aboard
-  else if (ENABLE_ALL_ABOARD) {
-    if (ENABLE_ASSERTIONS) assert(loc_entry->all_aboard);
-    loc_entry->all_aboard_time_out++;
-    if (ENABLE_ASSERTIONS) assert(loc_entry->new_ts.version == ALL_ABOARD_TS);
-    if (loc_entry->all_aboard_time_out > ALL_ABOARD_TIMEOUT_CNT) {
-      // printf("Wrkr %u, Timing out on key %u \n", t_id, loc_entry->key.bkt);
-      loc_entry->state = RETRY_WITH_BIGGER_TS;
-      loc_entry->all_aboard_time_out = 0;
-      loc_entry->new_ts.version = PAXOS_TS;
-    }
-    else return; // avoid zeroing out the responses
-  }
-  else if (ENABLE_ASSERTIONS) assert(false);
-
+  return true;
 }
 
+
+
+
 static inline void inspect_accepts(cp_core_ctx_t *cp_core_ctx,
-                                   loc_entry_t *loc_entry,
-                                   uint16_t t_id)
+                                   loc_entry_t *loc_entry)
 {
-  check_sum_of_reps(loc_entry);
-  if (!loc_entry->rmw_reps.ready_to_inspect) return;
+  check_inspect_accepts(loc_entry);
   loc_entry->rmw_reps.inspected = true;
 
+  bool handled = handle_quorum_of_acc_reps(cp_core_ctx, loc_entry);
+  if (handled) clean_up_after_inspecting_accept(loc_entry, cp_core_ctx->t_id);
+  else handle_all_aboard(loc_entry, cp_core_ctx->t_id);
+}
 
-  handle_quorum_of_acc_reps(cp_core_ctx, loc_entry, cp_core_ctx->t_id);
-
-  clean_up_after_inspecting_accept(loc_entry, cp_core_ctx->t_id);
-
+static inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                                       loc_entry_t *loc_entry)
+{
+  if (loc_entry->rmw_reps.ready_to_inspect)
+    inspect_accepts(cp_core_ctx, loc_entry);
 }
 
 static inline void inspect_commits(cp_core_ctx_t *cp_core_ctx,
@@ -151,7 +165,7 @@ static inline void first_fsm_proped_acced_needs_kv(cp_core_ctx_t *cp_core_ctx,
     case INVALID_RMW:
       return;
     case ACCEPTED:
-      inspect_accepts(cp_core_ctx, loc_entry, cp_core_ctx->t_id);
+      inspect_accepts_if_ready_to_inspect(cp_core_ctx, loc_entry);
       break;
     case PROPOSED:
       inspect_proposes(cp_core_ctx, loc_entry, cp_core_ctx->t_id);

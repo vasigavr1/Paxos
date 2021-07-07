@@ -81,17 +81,34 @@ static inline void checks_before_resetting_prop(loc_entry_t *loc_entry)
                                  HELP_PREV_COMMITTED_LOG_TOO_HIGH);
 }
 
-static inline void check_loc_entry_help_flag_is(loc_entry_t *loc_entry,
-                                                uint8_t expected_state)
+static inline void check_loc_entry_help_flag(loc_entry_t *loc_entry,
+                                             uint8_t state,
+                                             bool expected_to_be)
 {
   if (ENABLE_ASSERTIONS) {
-    if (loc_entry->helping_flag != expected_state){
-      my_printf(red,"Expecting helping flag to be %s, flag is %s \n",
-                help_state_to_str(expected_state),
+    bool state_is_correct = expected_to_be ?
+                 loc_entry->helping_flag == state :
+                 loc_entry->helping_flag != state;
+    if (!state_is_correct){
+      my_printf(red,"Expecting helping flag to %s be %s, flag is %s \n",
+                expected_to_be ? "" : "not",
+                help_state_to_str(state),
                 help_state_to_str(loc_entry->helping_flag));
       assert(false);
     }
   }
+}
+
+static inline void check_loc_entry_help_flag_is(loc_entry_t *loc_entry,
+                                                uint8_t expected_state)
+{
+  check_loc_entry_help_flag(loc_entry, expected_state, true);
+}
+
+static inline void check_loc_entry_help_flag_is_not(loc_entry_t *loc_entry,
+                                                    uint8_t expected_state)
+{
+  check_loc_entry_help_flag(loc_entry, expected_state, false);
 }
 
 static inline void check_loc_entry_is_not_helping(loc_entry_t *loc_entry)
@@ -799,6 +816,9 @@ static inline void check_that_a_nack_is_received(bool received_nack,
       assert(rep_info->rmw_id_commited > 0 || rep_info->log_too_small > 0 ||
              rep_info->already_accepted > 0 || rep_info->seen_higher_prop_acc > 0 ||
              rep_info->log_too_high > 0);
+    else assert(rep_info->rmw_id_commited == 0 && rep_info->log_too_small == 0 &&
+                rep_info->already_accepted == 0 && rep_info->seen_higher_prop_acc == 0 &&
+                rep_info->log_too_high == 0);
   }
 }
 
@@ -813,7 +833,70 @@ static inline void check_that_if_nack_and_helping_flag_is_helping(bool is_helpin
   }
 }
 //
+static inline void check_handle_all_aboard(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(ENABLE_ALL_ABOARD);
+    assert(loc_entry->all_aboard);
+    assert(loc_entry->new_ts.version == ALL_ABOARD_TS);
+  }
+}
+
+static inline void print_all_aboard_time_out(loc_entry_t *loc_entry,
+                                             uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+     //my_printf(green, "Wrkr %u, Timing out on key %u \n",
+     // t_id, loc_entry->key.bkt);
+  }
+}
+
+
+static inline void check_inspect_accepts(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    check_sum_of_reps(loc_entry);
+    check_loc_entry_help_flag_is_not(loc_entry, PROPOSE_LOCALLY_ACCEPTED);
+    check_loc_entry_help_flag_is_not(loc_entry, PROPOSE_NOT_LOCALLY_ACKED);
+    check_state_with_allowed_flags(3, loc_entry->helping_flag, NOT_HELPING, HELPING);
+  }
+}
+
+
 //static inline void check_()
-//{}
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
 
 #endif
