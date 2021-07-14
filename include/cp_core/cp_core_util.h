@@ -284,17 +284,16 @@ static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,
   return true;
 }
 
-static inline void keep_track_of_the_new_rmw_in_the_kv_ptr(mica_op_t *kv_ptr,
-                                                           loc_entry_t *loc_entry,
-                                                           uint16_t t_id)
+
+static inline void save_the_info_of_the_kv_ptr_owner(mica_op_t *kv_ptr,
+                                                     loc_entry_t *loc_entry)
 {
-  print_when_state_changed_not_grabbing_kv_ptr(kv_ptr, loc_entry, t_id);
   loc_entry->help_rmw->state = kv_ptr->state;
   assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
   loc_entry->help_rmw->ts = kv_ptr->prop_ts;
   loc_entry->help_rmw->log_no = kv_ptr->log_no;
-  loc_entry->back_off_cntr = 0;
 }
+
 
 static inline void if_invalid_grab_if_changed_keep_track_of_the_new_rmw(mica_op_t *kv_ptr,
                                                                         loc_entry_t *loc_entry,
@@ -305,7 +304,9 @@ static inline void if_invalid_grab_if_changed_keep_track_of_the_new_rmw(mica_op_
   if (kv_ptr->state == INVALID_RMW)
     *kv_ptr_was_grabbed = grab_invalid_kv_ptr_after_waiting(kv_ptr,loc_entry, rmw_fails, t_id);
   else if (kv_ptr_state_has_changed(kv_ptr, loc_entry->help_rmw)) {
-    keep_track_of_the_new_rmw_in_the_kv_ptr(kv_ptr, loc_entry, t_id);
+    print_when_state_changed_not_grabbing_kv_ptr(kv_ptr, loc_entry, t_id);
+    save_the_info_of_the_kv_ptr_owner(kv_ptr, loc_entry);
+    loc_entry->back_off_cntr = 0;
   }
 }
 
@@ -383,7 +384,6 @@ static inline void bookkeep_kv_ptr_and_loc_entry_due_to_lower_accept_rep(mica_op
                                                                          loc_entry_t *loc_entry)
 {
   loc_entry->log_no = kv_ptr->accepted_log_no;
-
   loc_entry->new_ts.version = kv_ptr->prop_ts.version + 1;
   loc_entry->new_ts.m_id = (uint8_t) machine_id;
   kv_ptr->prop_ts = loc_entry->new_ts;
@@ -421,42 +421,70 @@ static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_
   }
 }
 
+
+static inline void steal_the_stucked_proposed_rmw(loc_entry_t *loc_entry,
+                                                  mica_op_t *kv_ptr,
+                                                  uint32_t *new_version,
+                                                  uint16_t t_id)
+{
+  check_the_proposed_log_no(kv_ptr, loc_entry, t_id);
+  loc_entry->log_no = kv_ptr->last_committed_log_no + 1;
+  *new_version = kv_ptr->prop_ts.version + 1;
+  activate_kv_pair(PROPOSED, *new_version, kv_ptr, loc_entry->opcode,
+                   (uint8_t) machine_id, NULL, loc_entry->rmw_id.id,
+                   loc_entry->log_no, t_id,
+                   ENABLE_ASSERTIONS ? "attempt_to_steal_a_proposed_kv_ptr" : NULL);
+  loc_entry->base_ts = kv_ptr->ts;
+}
+
+static inline bool steal_if_invalid_or_state_has_not_changed(loc_entry_t *loc_entry,
+                                                             mica_op_t *kv_ptr,
+                                                             uint32_t *new_version,
+                                                             uint16_t t_id)
+{
+  bool invalid_or_state_has_not_changed =
+      kv_ptr->state == INVALID_RMW || kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw);
+
+  if (invalid_or_state_has_not_changed) {
+    steal_the_stucked_proposed_rmw(loc_entry, kv_ptr, new_version, t_id);
+    return true;
+  }
+  else if (kv_ptr_state_has_changed(kv_ptr, loc_entry->help_rmw)) {
+    print_when_state_changed_steal_proposed(kv_ptr, loc_entry, t_id);
+    save_the_info_of_the_kv_ptr_owner(kv_ptr, loc_entry);
+  }
+  else my_assert(false, "");
+  return false;
+}
+
+static inline bool will_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
+                                                mica_op_t *kv_ptr,
+                                                uint32_t *new_version,
+                                                uint16_t t_id)
+{
+  bool kv_ptr_was_grabbed = false;
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
+  {
+    if (!if_already_committed_bcast_commits(loc_entry, t_id)) {
+      kv_ptr_was_grabbed =
+          steal_if_invalid_or_state_has_not_changed(loc_entry, kv_ptr,
+                                                    new_version, t_id);
+    }
+  }
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+  return kv_ptr_was_grabbed;
+}
+
 // After backing off waiting on a PROPOSED kv_ptr try to steal it
 static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
                                                       mica_op_t *kv_ptr,
                                                       uint16_t sess_i, uint16_t t_id)
 {
-  bool kv_ptr_was_grabbed = false;
-  lock_kv_ptr(loc_entry->kv_ptr, t_id);
-  if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-    return ;
-  }
   uint32_t new_version = 0;
 
-  if (kv_ptr->state == INVALID_RMW || kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw)) {
-    check_the_proposed_log_no(kv_ptr, loc_entry, t_id);
-    loc_entry->log_no = kv_ptr->last_committed_log_no + 1;
-    new_version = kv_ptr->prop_ts.version + 1;
-    activate_kv_pair(PROPOSED, new_version, kv_ptr, loc_entry->opcode,
-                     (uint8_t) machine_id, NULL, loc_entry->rmw_id.id,
-                     loc_entry->log_no, t_id,
-                     ENABLE_ASSERTIONS ? "attempt_to_steal_a_proposed_kv_ptr" : NULL);
-    loc_entry->base_ts = kv_ptr->ts;
-    kv_ptr_was_grabbed = true;
-  }
-  else if (kv_ptr_state_has_changed(kv_ptr, loc_entry->help_rmw)) {
-    print_when_state_changed_steal_proposed(kv_ptr, loc_entry, t_id);
-    loc_entry->help_rmw->log_no = kv_ptr->log_no;
-    loc_entry->help_rmw->state = kv_ptr->state;
-    loc_entry->help_rmw->ts = kv_ptr->prop_ts;
-    assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
-  }
-  else if (ENABLE_ASSERTIONS) assert(false);
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_steal_a_proposed_kv_ptr", t_id);
-  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
   loc_entry->back_off_cntr = 0;
-  if (kv_ptr_was_grabbed) {
+
+  if (will_steal_a_proposed_kv_ptr(loc_entry, kv_ptr, &new_version, t_id)) {
     print_after_stealing_proposed(kv_ptr, loc_entry, t_id);
     fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, new_version,
                                           PROPOSED, sess_i, t_id);
@@ -466,7 +494,6 @@ static inline void attempt_to_steal_a_proposed_kv_ptr(loc_entry_t *loc_entry,
 
 
 
-//------------------------------LOG-TOO_HIGH------------------------------------------
 
 
 
@@ -516,7 +543,7 @@ static inline void clean_up_if_proposed_after_needs_kv_ptr(cp_core_ctx_t *cp_cor
 
 
 
-//------------------------------REGULAR INSPECTIONS------------------------------------------
+
 
 // local_entry->state == RETRY_WITH_BIGGER_TS
 static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
