@@ -348,7 +348,7 @@ static inline void update_kv_ptr_when_taking_kv_ptr_with_higher_TS(mica_op_t *kv
     kv_ptr->log_no = kv_ptr->last_committed_log_no + 1;
     kv_ptr->opcode = loc_entry->opcode;
     assign_second_rmw_id_to_first(&kv_ptr->rmw_id, &loc_entry->rmw_id);
-  } else check_when_retrying_and_state_is_not_invalid(kv_ptr, loc_entry, from_propose);
+  }
   kv_ptr->prop_ts = loc_entry->new_ts;
 }
 
@@ -374,14 +374,14 @@ static inline void rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(mica_op_t *kv_ptr,
                                                               bool from_propose,
                                                               uint16_t t_id)
 {
+  check_when_retrying_with_higher_TS(kv_ptr, loc_entry, from_propose);
   if (rmw_fails_with_loc_entry(loc_entry, kv_ptr, rmw_fails, t_id)) {
     check_kv_ptr_state_is_not_acced(kv_ptr);
     kv_ptr->state = INVALID_RMW;
   }
   else {
-    update_kv_ptr_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry, from_propose);
     update_loc_entry_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry);
-
+    update_kv_ptr_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry, from_propose);
     if_accepted_help_else_steal(kv_ptr, loc_entry, help_locally_acced);
     *kv_ptr_was_grabbed = true;
   }
