@@ -975,11 +975,28 @@ static inline void check_kv_ptr_state_is_not_acced(mica_op_t *kv_ptr)
   }
 }
 
-static inline void check_if_accepted_()
+static inline void check_op_version(trace_op_t *op,
+                                    bool doing_all_aboard)
 {
   if (ENABLE_ASSERTIONS) {
+    if (doing_all_aboard)
+      assert(op->ts.version == ALL_ABOARD_TS);
+    else assert(op->ts.version == PAXOS_TS);
   }
 }
+
+static inline void check_session_id(uint16_t session_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(session_id < SESSIONS_PER_THREAD);
+  }
+}
+
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
 
 //static inline void check_()
 //{

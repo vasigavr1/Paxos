@@ -314,9 +314,9 @@ static inline void clean_up_after_retrying(sess_stall_t *stall_info,
 
 
 
-static inline bool can_kv_ptr_can_be_taken_with_higher_TS(mica_op_t *kv_ptr,
-                                                          loc_entry_t *loc_entry,
-                                                          retry_flags_t *flags)
+static inline bool can_kv_ptr_be_taken_with_higher_TS(mica_op_t *kv_ptr,
+                                                      loc_entry_t *loc_entry,
+                                                      retry_flags_t *flags)
 {
   bool is_still_proposed = rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
                            kv_ptr->state == PROPOSED;
@@ -354,7 +354,7 @@ static inline void if_accepted_help_else_steal(mica_op_t *kv_ptr,
                                                retry_flags_t *flags)
 {
   if (!flags->is_still_accepted) {
-    if (ENABLE_ASSERTIONS) assert(kv_ptr->state != ACCEPTED);
+    check_kv_ptr_state_is_not_acced(kv_ptr);
     kv_ptr->state = PROPOSED;
   }
   else {
@@ -398,7 +398,7 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
       unlock_kv_ptr(loc_entry->kv_ptr, t_id);
       return;
     }
-    if (can_kv_ptr_can_be_taken_with_higher_TS(kv_ptr, loc_entry, &flags)) {
+    if (can_kv_ptr_be_taken_with_higher_TS(kv_ptr, loc_entry, &flags)) {
       rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(kv_ptr, loc_entry, &flags, t_id);
     }
     else print_when_retrying_fails(kv_ptr, loc_entry, t_id);
@@ -408,19 +408,50 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
 }
 
 
-
-
-
-
-
-
-
-
 // Worker inspects its local RMW entries
 void cp_core_inspect_rmws(cp_core_ctx_t *cp_core_ctx);
 /*--------------------------------------------------------------------------
  * --------------------INIT RMW-------------------------------------
  * --------------------------------------------------------------------------*/
+
+
+static inline void loc_entry_was_successful_first_time(loc_entry_t *loc_entry,
+                                                       cp_core_ctx_t *cp_core_ctx,
+                                                       trace_op_t *op,
+                                                       uint16_t t_id)
+{
+  fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, op->ts.version,
+                                        loc_entry->state, op->session_id, t_id);
+
+  bool doing_all_aboard = loc_entry->state == ACCEPTED;
+  check_op_version(op, doing_all_aboard);
+
+  if (doing_all_aboard) {
+    loc_entry->accepted_log_no = loc_entry->log_no;
+    cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry, false);
+    loc_entry->killable = false;
+    loc_entry->all_aboard = true;
+    loc_entry->all_aboard_time_out = 0;
+  }
+  else
+    cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
+}
+
+static inline void handle_loc_entry_cas_failed_first_time(loc_entry_t *loc_entry,
+                                                          cp_core_ctx_t *cp_core_ctx,
+                                                          trace_op_t *op,
+                                                          uint16_t t_id)
+{
+ if (ENABLE_CAS_CANCELLING) {
+   if (loc_entry->state == CAS_FAILED) {
+     signal_completion_to_client(op->session_id, op->index_to_req_array, t_id);
+     cp_core_ctx->stall_info->stalled[op->session_id] = false;
+     cp_core_ctx->stall_info->all_stalled = false;
+     loc_entry->state = INVALID_RMW;
+   }
+ }
+ else my_assert(false, "Wrong loc_entry in RMW");
+}
 
 // Insert an RMW in the local RMW structs
 static inline void insert_rmw(cp_core_ctx_t *cp_core_ctx,
@@ -428,44 +459,16 @@ static inline void insert_rmw(cp_core_ctx_t *cp_core_ctx,
                               uint16_t t_id)
 {
   uint16_t session_id = op->session_id;
+  check_session_id(session_id);
   loc_entry_t *loc_entry = &cp_core_ctx->rmw_entries[session_id];
-  if (loc_entry->state == CAS_FAILED) {
-    //printf("Wrkr%u, sess %u, entry %u rmw_failing \n", t_id, session_id, resp->rmw_entry);
-    signal_completion_to_client(session_id, op->index_to_req_array, t_id);
-    cp_core_ctx->stall_info->stalled[session_id] = false;
-    cp_core_ctx->stall_info->all_stalled = false;
-    loc_entry->state = INVALID_RMW;
-    return;
-  }
-  if (ENABLE_ASSERTIONS) {
-    assert(session_id < SESSIONS_PER_THREAD);
-  }
+  uint8_t success_state = (uint8_t) (ENABLE_ALL_ABOARD && op->attempt_all_aboard ? ACCEPTED : PROPOSED);
+  bool kv_ptr_taken = loc_entry->state == success_state;
 
-  // my_printf(green, "Session %u starts an rmw \n", loc_entry->glob_sess_id);
-  uint8_t state = (uint8_t) (ENABLE_ALL_ABOARD && op->attempt_all_aboard ? ACCEPTED: PROPOSED);
-  // if the kv_ptr was occupied, put in the next op to try next round
-  if (loc_entry->state == state) { // the RMW has gotten an entry and is to be sent
-    fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, op->ts.version,
-                                          state, session_id, t_id);
-    if (state == ACCEPTED) {
-      if (ENABLE_ASSERTIONS) {
-        assert(op->ts.version == ALL_ABOARD_TS);
-      }
-      loc_entry->accepted_log_no = loc_entry->log_no;
-      cp_acc_insert(cp_core_ctx->netw_ctx, loc_entry, false);
-      loc_entry->killable = false;
-      loc_entry->all_aboard = true;
-      loc_entry->all_aboard_time_out = 0;
-    }
-    else {
-      if (ENABLE_ASSERTIONS) assert(op->ts.version == PAXOS_TS);
-      cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
-    }
-  }
+  if (kv_ptr_taken)  loc_entry_was_successful_first_time(loc_entry, cp_core_ctx, op, t_id);
   else if (loc_entry->state == NEEDS_KV_PTR) {
     if (ENABLE_ALL_ABOARD) loc_entry->all_aboard = false;
   }
-  else my_assert(false, "Wrong loc_entry in RMW");
+  else handle_loc_entry_cas_failed_first_time(loc_entry, cp_core_ctx, op, t_id);
 }
 
 
