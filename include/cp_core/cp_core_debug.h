@@ -943,9 +943,10 @@ static inline void check_when_retrying_with_higher_TS(mica_op_t *kv_ptr,
 {
 
   if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->log_no == kv_ptr->last_committed_log_no + 1);
-    if (kv_ptr->state != INVALID_RMW)
+    if (kv_ptr->state != INVALID_RMW) {
       assert(kv_ptr->log_no == kv_ptr->last_committed_log_no + 1);
+      assert(loc_entry->log_no == kv_ptr->last_committed_log_no + 1);
+    }
     if (kv_ptr->state == ACCEPTED) {
       assert(!from_propose);
       assert(compare_ts(&kv_ptr->accepted_ts, &loc_entry->new_ts) == EQUAL);
