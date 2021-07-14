@@ -937,22 +937,54 @@ static inline void check_end_handle_needs_kv_ptr_state(loc_entry_t *loc_entry)
   }
 }
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+static inline void check_when_retrying_and_state_is_not_invalid(mica_op_t *kv_ptr,
+                                                                loc_entry_t *loc_entry,
+                                                                bool from_propose,)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(loc_entry->log_no == kv_ptr->last_committed_log_no + 1);
+    assert(kv_ptr->log_no == kv_ptr->last_committed_log_no + 1);
+    if (kv_ptr->state == ACCEPTED) {
+      assert(!from_propose);
+      assert(compare_ts(&kv_ptr->accepted_ts, &loc_entry->new_ts) == EQUAL);
+    }
+  }
+}
+
+static inline void print_when_retrying_fails(mica_op_t *kv_ptr,
+                                             loc_entry_t *loc_entry,
+                                             uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (DEBUG_RMW)
+      my_printf(yellow, "Wrkr %u, session %u  failed when attempting to get/regain the kv_ptr, "
+                        "waiting: waited for %u cycles for "
+                        "now waiting on rmw_id %, state %u\n",
+                t_id, loc_entry->sess_id,
+                kv_ptr->rmw_id.id, kv_ptr->state);
+  }
+}
+
+
+static inline void check_kv_ptr_state_is_not_acced(mica_op_t *kv_ptr)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(kv_ptr->state != ACCEPTED);
+  }
+}
+
+static inline void check_if_accepted_()
+{
+  if (ENABLE_ASSERTIONS) {
+  }
+}
 
 //static inline void check_()
 //{
 //  if (ENABLE_ASSERTIONS) {
 //  }
 //}
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+
 //static inline void check_()
 //{
 //  if (ENABLE_ASSERTIONS) {
