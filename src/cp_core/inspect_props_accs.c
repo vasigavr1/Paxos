@@ -289,15 +289,18 @@ static inline void react_on_log_too_high_for_prop(loc_entry_t *loc_entry,
     fill_help_loc_entry_to_bcast_after_log_too_high(loc_entry, t_id);
     loc_entry->log_too_high_cntr = 0;
   }
+  else {
+    loc_entry->state = RETRY_WITH_BIGGER_TS;
+    loc_entry->new_ts.version++;
+  }
 }
 
 static inline void prop_handle_log_too_high(loc_entry_t *loc_entry,
                                             bool *zero_out_log_too_high_cntr,
                                             uint16_t t_id)
 {
-  loc_entry->state = RETRY_WITH_BIGGER_TS;
+
   react_on_log_too_high_for_prop(loc_entry, t_id);
-  loc_entry->new_ts.version = loc_entry->new_ts.version;
   *zero_out_log_too_high_cntr = false;
 }
 

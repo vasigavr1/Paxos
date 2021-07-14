@@ -264,44 +264,72 @@ static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *s
 }
 
 
-// When inspecting an RMW that failed to grab a kv_ptr in the past
-static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info,
-                                                        mica_op_t *kv_ptr,
-                                                        loc_entry_t *loc_entry,
-                                                        uint16_t sess_i, uint16_t t_id)
+static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,
+                                                     loc_entry_t *loc_entry,
+                                                     bool *rmw_fails,
+                                                     uint16_t t_id)
 {
-  checks_init_attempt_to_grab_kv_ptr(loc_entry, t_id);
-  bool kv_ptr_was_grabbed = false;
-  bool rmw_fails = false;
-  uint32_t version = PAXOS_TS;
+  if (rmw_fails_with_loc_entry(loc_entry, kv_ptr, rmw_fails, t_id))  return false;
 
-  lock_kv_ptr(kv_ptr, t_id);
-  if (if_already_committed_bcast_commits(loc_entry, t_id)) {
-    unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-    return true;
-  }
-  if (kv_ptr->state == INVALID_RMW) {
-    if (!rmw_fails_with_loc_entry(loc_entry, kv_ptr, &rmw_fails, t_id)) {
-      loc_entry->log_no = kv_ptr->last_committed_log_no + 1;
-      activate_kv_pair(PROPOSED, PAXOS_TS, kv_ptr, loc_entry->opcode,
-                       (uint8_t) machine_id, NULL, loc_entry->rmw_id.id,
-                       loc_entry->log_no, t_id,
-                       ENABLE_ASSERTIONS ? "attempt_to_grab_kv_ptr_after_waiting" : NULL);
+  loc_entry->log_no = kv_ptr->last_committed_log_no + 1;
+  activate_kv_pair(PROPOSED, PAXOS_TS, kv_ptr, loc_entry->opcode,
+                   (uint8_t) machine_id, NULL, loc_entry->rmw_id.id,
+                   loc_entry->log_no, t_id,
+                   ENABLE_ASSERTIONS ? "attempt_to_grab_kv_ptr_after_waiting" : NULL);
+  print_when_grabbing_kv_ptr(loc_entry, t_id);
+  return true;
+}
 
-      kv_ptr_was_grabbed = true;
-      print_when_grabbing_kv_ptr(loc_entry, t_id);
-    }
-  }
+static inline void keep_track_of_the_new_rmw_in_the_kv_ptr(mica_op_t *kv_ptr,
+                                                           loc_entry_t *loc_entry,
+                                                           uint16_t t_id)
+{
+  print_when_state_changed_not_grabbing_kv_ptr(kv_ptr, loc_entry, t_id);
+  loc_entry->help_rmw->state = kv_ptr->state;
+  assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
+  loc_entry->help_rmw->ts = kv_ptr->prop_ts;
+  loc_entry->help_rmw->log_no = kv_ptr->log_no;
+  loc_entry->back_off_cntr = 0;
+}
+
+static inline void if_invalid_grab_if_changed_keep_track_of_the_new_rmw(mica_op_t *kv_ptr,
+                                                                        loc_entry_t *loc_entry,
+                                                                        bool *kv_ptr_was_grabbed,
+                                                                        bool *rmw_fails,
+                                                                        uint16_t t_id)
+{
+  if (kv_ptr->state == INVALID_RMW)
+    *kv_ptr_was_grabbed = grab_invalid_kv_ptr_after_waiting(kv_ptr,loc_entry, rmw_fails, t_id);
   else if (kv_ptr_state_has_changed(kv_ptr, loc_entry->help_rmw)) {
-    print_when_state_changed_not_grabbing_kv_ptr(kv_ptr, loc_entry, t_id);
-    loc_entry->help_rmw->state = kv_ptr->state;
-    assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
-    loc_entry->help_rmw->ts = kv_ptr->prop_ts;
-    loc_entry->help_rmw->log_no = kv_ptr->log_no;
-    loc_entry->back_off_cntr = 0;
+    keep_track_of_the_new_rmw_in_the_kv_ptr(kv_ptr, loc_entry, t_id);
   }
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_grab_kv_ptr_after_waiting", t_id);
+}
+
+
+static inline void inspect_if_kv_ptr_is_invalid_or_has_changed_owner(mica_op_t *kv_ptr,
+                                                                     loc_entry_t *loc_entry,
+                                                                     bool *kv_ptr_was_grabbed,
+                                                                     bool *rmw_fails,
+                                                                     uint16_t t_id)
+{
+  lock_kv_ptr(kv_ptr, t_id);
+  {
+    if (!if_already_committed_bcast_commits(loc_entry, t_id))
+      if_invalid_grab_if_changed_keep_track_of_the_new_rmw(kv_ptr, loc_entry,
+                                                           kv_ptr_was_grabbed,
+                                                           rmw_fails, t_id);
+  }
   unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+}
+
+static inline void if_grabbed_fill_loc_if_failed_free_session(sess_stall_t *stall_info,
+                                                              mica_op_t *kv_ptr,
+                                                              loc_entry_t *loc_entry,
+                                                              uint16_t sess_i,
+                                                              bool kv_ptr_was_grabbed,
+                                                              bool rmw_fails,
+                                                              uint16_t t_id)
+{
   if (kv_ptr_was_grabbed) {
     fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry, PAXOS_TS,
                                           PROPOSED, sess_i, t_id);
@@ -310,9 +338,27 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
     check_and_print_when_rmw_fails(kv_ptr, loc_entry, t_id);
     loc_entry->state = INVALID_RMW;
     free_session_from_rmw(loc_entry, stall_info, false, t_id);
-    return true;
   }
-  return kv_ptr_was_grabbed;
+}
+
+// When inspecting an RMW that failed to grab a kv_ptr in the past
+static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info,
+                                                        mica_op_t *kv_ptr,
+                                                        loc_entry_t *loc_entry,
+                                                        uint16_t sess_i,
+                                                        uint16_t t_id)
+{
+  checks_init_attempt_to_grab_kv_ptr(loc_entry, t_id);
+  bool kv_ptr_was_grabbed = false;
+  bool rmw_fails = false;
+
+  inspect_if_kv_ptr_is_invalid_or_has_changed_owner(kv_ptr,loc_entry,
+                                                    &kv_ptr_was_grabbed, &rmw_fails, t_id);
+
+  if_grabbed_fill_loc_if_failed_free_session(stall_info, kv_ptr, loc_entry, sess_i,
+                                             kv_ptr_was_grabbed, rmw_fails, t_id);
+
+  return kv_ptr_was_grabbed || rmw_fails;
 }
 
 // Insert a helping accept in the write fifo after waiting on it
