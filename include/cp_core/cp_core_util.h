@@ -279,25 +279,32 @@ void handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
 
 //------------------------------CLEAN-UP------------------------------------------
 
+typedef struct retry_flags{
+  bool from_propose;
+  bool kv_ptr_was_grabbed ;
+  bool rmw_fails;
+  bool help_locally_acced;
+  bool is_still_accepted;
+} retry_flags_t;
+
+
 static inline void clean_up_after_retrying(sess_stall_t *stall_info,
                                            mica_op_t *kv_ptr,
                                            loc_entry_t *loc_entry,
-                                           bool kv_ptr_was_grabbed,
-                                           bool help_locally_acced,
-                                           bool rmw_fails,
+                                           retry_flags_t flags,
                                            uint16_t t_id)
 {
-  if (kv_ptr_was_grabbed) {
+  if (flags.kv_ptr_was_grabbed) {
     print_clean_up_after_retrying(kv_ptr, loc_entry, t_id);
     loc_entry->state = PROPOSED;
-    if (help_locally_acced)
+    if (flags.help_locally_acced)
       set_up_a_proposed_but_not_locally_acked_entry(stall_info, kv_ptr,
                                                     loc_entry, true, t_id);
     else local_rmw_ack(loc_entry);
   }
-  else if (rmw_fails) {
+  else if (flags.rmw_fails) {
     check_clean_up_after_retrying(kv_ptr, loc_entry,
-                                  help_locally_acced, t_id);
+                                  flags.help_locally_acced, t_id);
     loc_entry->state = INVALID_RMW;
     free_session_from_rmw(loc_entry, stall_info,
                           false, t_id);
@@ -307,27 +314,18 @@ static inline void clean_up_after_retrying(sess_stall_t *stall_info,
 
 
 
-
-
-
-static inline bool is_kv_ptr_still_accepted(mica_op_t *kv_ptr,
-                                            loc_entry_t *loc_entry)
-{
-  return rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
-         kv_ptr->state == ACCEPTED &&
-         compare_ts(&kv_ptr->accepted_ts, &loc_entry->new_ts) == EQUAL;
-}
-
-
-
 static inline bool can_kv_ptr_can_be_taken_with_higher_TS(mica_op_t *kv_ptr,
-                                                          loc_entry_t *loc_entry)
+                                                          loc_entry_t *loc_entry,
+                                                          retry_flags_t *flags)
 {
   bool is_still_proposed = rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
                            kv_ptr->state == PROPOSED;
 
-  return kv_ptr->state == INVALID_RMW || is_still_proposed ||
-         is_kv_ptr_still_accepted(kv_ptr, loc_entry);
+  flags->is_still_accepted = rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id) &&
+                             kv_ptr->state == ACCEPTED &&
+                             compare_ts(&kv_ptr->accepted_ts, &loc_entry->new_ts) == EQUAL;
+
+  return kv_ptr->state == INVALID_RMW || is_still_proposed || flags->is_still_accepted;
 }
 
 
@@ -341,8 +339,7 @@ static inline void update_loc_entry_when_taking_kv_ptr_with_higher_TS(mica_op_t 
 }
 
 static inline void update_kv_ptr_when_taking_kv_ptr_with_higher_TS(mica_op_t *kv_ptr,
-                                                                   loc_entry_t *loc_entry,
-                                                                   bool from_propose)
+                                                                   loc_entry_t *loc_entry)
 {
   if (kv_ptr->state == INVALID_RMW) {
     kv_ptr->log_no = kv_ptr->last_committed_log_no + 1;
@@ -354,36 +351,33 @@ static inline void update_kv_ptr_when_taking_kv_ptr_with_higher_TS(mica_op_t *kv
 
 static inline void if_accepted_help_else_steal(mica_op_t *kv_ptr,
                                                loc_entry_t *loc_entry,
-                                               bool *help_locally_acced)
+                                               retry_flags_t *flags)
 {
-  if (!is_kv_ptr_still_accepted(kv_ptr, loc_entry)) {
+  if (!flags->is_still_accepted) {
     if (ENABLE_ASSERTIONS) assert(kv_ptr->state != ACCEPTED);
     kv_ptr->state = PROPOSED;
   }
   else {
-    *help_locally_acced = true;
+    flags->help_locally_acced = true;
     loc_entry->help_loc_entry->new_ts = kv_ptr->accepted_ts;
   }
 }
 
 static inline void rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(mica_op_t *kv_ptr,
                                                               loc_entry_t *loc_entry,
-                                                              bool *rmw_fails,
-                                                              bool *kv_ptr_was_grabbed,
-                                                              bool *help_locally_acced,
-                                                              bool from_propose,
+                                                              retry_flags_t *flags,
                                                               uint16_t t_id)
 {
-  check_when_retrying_with_higher_TS(kv_ptr, loc_entry, from_propose);
-  if (rmw_fails_with_loc_entry(loc_entry, kv_ptr, rmw_fails, t_id)) {
+  check_when_retrying_with_higher_TS(kv_ptr, loc_entry, flags->from_propose);
+  if (rmw_fails_with_loc_entry(loc_entry, kv_ptr, &flags->rmw_fails, t_id)) {
     check_kv_ptr_state_is_not_acced(kv_ptr);
     kv_ptr->state = INVALID_RMW;
   }
   else {
     update_loc_entry_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry);
-    update_kv_ptr_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry, from_propose);
-    if_accepted_help_else_steal(kv_ptr, loc_entry, help_locally_acced);
-    *kv_ptr_was_grabbed = true;
+    update_kv_ptr_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry);
+    if_accepted_help_else_steal(kv_ptr, loc_entry, flags);
+    flags->kv_ptr_was_grabbed = true;
   }
 }
 
@@ -391,10 +385,12 @@ static inline void rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(mica_op_t *kv_ptr,
 static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
                                               loc_entry_t *loc_entry,
                                               bool from_propose,
-                                              uint16_t t_id) {
-  bool kv_ptr_was_grabbed  = false;
-  bool rmw_fails = false;
-  bool help_locally_acced = false;
+                                              uint16_t t_id)
+{
+  retry_flags_t flags;
+  memset(&flags, 0, sizeof(retry_flags_t));
+  flags.from_propose = from_propose;
+
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
   lock_kv_ptr(kv_ptr, t_id);
   {
@@ -402,19 +398,13 @@ static inline void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
       unlock_kv_ptr(loc_entry->kv_ptr, t_id);
       return;
     }
-    // if either state is invalid or we own it
-    if (can_kv_ptr_can_be_taken_with_higher_TS(kv_ptr, loc_entry)) {
-      rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(kv_ptr, loc_entry, &rmw_fails,
-                                                 &kv_ptr_was_grabbed, &help_locally_acced,
-                                                 from_propose, t_id);
+    if (can_kv_ptr_can_be_taken_with_higher_TS(kv_ptr, loc_entry, &flags)) {
+      rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(kv_ptr, loc_entry, &flags, t_id);
     }
     else print_when_retrying_fails(kv_ptr, loc_entry, t_id);
   }
   unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-
-  clean_up_after_retrying(stall_info, kv_ptr, loc_entry,
-                          kv_ptr_was_grabbed, help_locally_acced,
-                          rmw_fails, t_id);
+  clean_up_after_retrying(stall_info, kv_ptr, loc_entry, flags, t_id);
 }
 
 
