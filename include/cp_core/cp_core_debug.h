@@ -939,7 +939,7 @@ static inline void check_end_handle_needs_kv_ptr_state(loc_entry_t *loc_entry)
 
 static inline void check_when_retrying_and_state_is_not_invalid(mica_op_t *kv_ptr,
                                                                 loc_entry_t *loc_entry,
-                                                                bool from_propose,)
+                                                                bool from_propose)
 {
   if (ENABLE_ASSERTIONS) {
     assert(loc_entry->log_no == kv_ptr->last_committed_log_no + 1);
