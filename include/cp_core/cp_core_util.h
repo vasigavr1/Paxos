@@ -337,9 +337,6 @@ static inline void update_loc_entry_when_taking_kv_ptr_with_higher_TS(mica_op_t 
   loc_entry->log_no = kv_ptr->last_committed_log_no + 1;
   loc_entry->new_ts.version = MAX(loc_entry->new_ts.version, kv_ptr->prop_ts.version) + 1;
   loc_entry->base_ts = kv_ptr->ts; // Minimize the possibility for RMW_ACK_BASE_TS_STALE
-  if (ENABLE_ASSERTIONS) {
-    assert(loc_entry->new_ts.version > kv_ptr->prop_ts.version);
-  }
   loc_entry->new_ts.m_id = (uint8_t) machine_id;
 }
 
@@ -382,8 +379,9 @@ static inline void rmw_fails_or_steals_kv_ptr_or_helps_kv_ptr(mica_op_t *kv_ptr,
     kv_ptr->state = INVALID_RMW;
   }
   else {
-    update_loc_entry_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry);
     update_kv_ptr_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry, from_propose);
+    update_loc_entry_when_taking_kv_ptr_with_higher_TS(kv_ptr, loc_entry);
+
     if_accepted_help_else_steal(kv_ptr, loc_entry, help_locally_acced);
     *kv_ptr_was_grabbed = true;
   }
