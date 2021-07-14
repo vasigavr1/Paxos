@@ -897,10 +897,65 @@ static inline void print_log_too_high_timeout(loc_entry_t *loc_entry,
   }
 }
 
+static inline void print_needs_kv_ptr_timeout_expires(loc_entry_t *loc_entry,
+                                                      uint16_t sess_i,
+                                                      uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (DEBUG_RMW) {
+      my_printf(yellow, "Wrkr %u  sess %u waiting for an "
+                        "rmw on key %u "
+                        "on log %u, back_of cntr %u waiting on "
+                        "rmw_id %u state %u \n",
+                t_id, sess_i, loc_entry->key.bkt,
+                loc_entry->help_rmw->log_no,
+                loc_entry->back_off_cntr,
+                loc_entry->help_rmw->rmw_id.id,
+                loc_entry->help_rmw->state);
+    }
+  }
+}
+
+static inline void check_handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
+                                                   uint16_t sess_i)
+{
+  if (ENABLE_ASSERTIONS) {
+    assert(cp_core_ctx->stall_info->stalled[sess_i]);
+  }
+}
+
+
+static inline void check_end_handle_needs_kv_ptr_state(loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    check_state_with_allowed_flags(6, (int) loc_entry->state,
+                                   INVALID_RMW,
+                                   PROPOSED,
+                                   NEEDS_KV_PTR,
+                                   ACCEPTED,
+                                   MUST_BCAST_COMMITS);
+  }
+}
+
 //static inline void check_()
 //{
 //  if (ENABLE_ASSERTIONS) {
 //  }
 //}
 
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
+//static inline void check_()
+//{
+//  if (ENABLE_ASSERTIONS) {
+//  }
+//}
 #endif

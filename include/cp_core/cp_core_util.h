@@ -232,10 +232,14 @@ void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
 
 
 
-
 /*--------------------------------------------------------------------------
  * -----------------------------RMW-FSM-------------------------------------
  * --------------------------------------------------------------------------*/
+void inspect_props_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                       loc_entry_t *loc_entry);
+
+void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                         loc_entry_t *loc_entry);
 
 
 //------------------------------HELP STUCK RMW------------------------------------------
@@ -243,14 +247,14 @@ void handle_rmw_rep_replies(cp_core_ctx_t *cp_core_ctx,
 static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *stall_info,
                                                                  mica_op_t  *kv_ptr,
                                                                  loc_entry_t *loc_entry,
-                                                                 bool help_myself,
+                                                                 bool helping_myself,
                                                                  uint16_t t_id)
 {
   checks_and_prints_proposed_but_not_locally_acked(stall_info, kv_ptr, loc_entry, t_id);
   loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
   loc_entry->state = PROPOSED;
   help_loc_entry->state = ACCEPTED;
-  if (help_myself) {
+  if (helping_myself) {
     loc_entry->helping_flag = PROPOSE_LOCALLY_ACCEPTED;
   }
   else {
@@ -361,40 +365,58 @@ static inline bool attempt_to_grab_kv_ptr_after_waiting(sess_stall_t *stall_info
   return kv_ptr_was_grabbed || rmw_fails;
 }
 
-// Insert a helping accept in the write fifo after waiting on it
+
+static inline void fill_help_loc_entry_with_acced_rmw(mica_op_t *kv_ptr,
+                                                      loc_entry_t *help_loc_entry)
+{
+
+  help_loc_entry->new_ts = kv_ptr->accepted_ts;
+  help_loc_entry->rmw_id = kv_ptr->rmw_id;
+  memcpy(help_loc_entry->value_to_write, kv_ptr->last_accepted_value,
+         (size_t) RMW_VALUE_SIZE);
+  help_loc_entry->base_ts = kv_ptr->base_acc_ts;
+}
+
+
+
+static inline void bookkeep_kv_ptr_and_loc_entry_due_to_lower_accept_rep(mica_op_t *kv_ptr,
+                                                                         loc_entry_t *loc_entry)
+{
+  loc_entry->log_no = kv_ptr->accepted_log_no;
+
+  loc_entry->new_ts.version = kv_ptr->prop_ts.version + 1;
+  loc_entry->new_ts.m_id = (uint8_t) machine_id;
+  kv_ptr->prop_ts = loc_entry->new_ts;
+}
+
+
+static inline bool will_help_locally_accepted_value(mica_op_t *kv_ptr,
+                                                    loc_entry_t *loc_entry,
+                                                    uint16_t t_id)
+{
+  bool help = false;
+  loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+  lock_kv_ptr(loc_entry->kv_ptr, t_id);
+  {
+    if (kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw)) {
+      fill_help_loc_entry_with_acced_rmw(kv_ptr, help_loc_entry);
+      bookkeep_kv_ptr_and_loc_entry_due_to_lower_accept_rep(kv_ptr, loc_entry);
+      help = true;
+      checks_attempt_to_help_locally_accepted(kv_ptr, loc_entry, t_id);
+    }
+  }
+  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
+  return help;
+}
+
+
 static inline void attempt_to_help_a_locally_accepted_value(sess_stall_t *stall_info,
                                                             loc_entry_t *loc_entry,
                                                             mica_op_t *kv_ptr, uint16_t t_id)
 {
-  bool help = false;
-  loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
-  // The stat of the kv_ptr must not be downgraded from ACCEPTED
-  lock_kv_ptr(loc_entry->kv_ptr, t_id);
-  // check again with the lock in hand
-  if (kv_ptr_state_has_not_changed(kv_ptr, loc_entry->help_rmw)) {
-    loc_entry->log_no = kv_ptr->accepted_log_no;
-    help_loc_entry->new_ts = kv_ptr->accepted_ts;
-    help_loc_entry->rmw_id = kv_ptr->rmw_id;
-    memcpy(help_loc_entry->value_to_write, kv_ptr->last_accepted_value,
-           (size_t) RMW_VALUE_SIZE);
-    help_loc_entry->base_ts = kv_ptr->base_acc_ts;
-
-    // we must make it appear as if the kv_ptr has seen our propose
-    // and has replied with a lower-base_ts-accept
-    loc_entry->new_ts.version = kv_ptr->prop_ts.version + 1;
-    loc_entry->new_ts.m_id = (uint8_t) machine_id;
-    kv_ptr->prop_ts = loc_entry->new_ts;
-    help = true;
-    checks_attempt_to_help_locally_accepted(kv_ptr, loc_entry, t_id);
-  }
-  check_log_nos_of_kv_ptr(kv_ptr, "attempt_to_help_a_locally_accepted_value", t_id);
-  unlock_kv_ptr(loc_entry->kv_ptr, t_id);
-
   loc_entry->back_off_cntr = 0;
-  if (help) {
-    // Helping means we are proposing, but we are not locally acked:
-    // We store a reply from the local machine that says already ACCEPTED
-    bool helping_myself = help_loc_entry->rmw_id.id == loc_entry->rmw_id.id;
+  if (will_help_locally_accepted_value(kv_ptr, loc_entry, t_id)) {
+    bool helping_myself = loc_entry->help_loc_entry->rmw_id.id == loc_entry->rmw_id.id;
     set_up_a_proposed_but_not_locally_acked_entry(stall_info, kv_ptr, loc_entry, helping_myself, t_id);
   }
 }
@@ -479,6 +501,14 @@ static inline void clean_up_after_retrying(sess_stall_t *stall_info,
 
 
 
+static inline void clean_up_if_proposed_after_needs_kv_ptr(cp_core_ctx_t *cp_core_ctx,
+                                                           loc_entry_t *loc_entry)
+{
+  if (loc_entry->state == PROPOSED) {
+    loc_entry->back_off_cntr = 0;
+    cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
+  }
+}
 
 
 
@@ -583,48 +613,29 @@ static inline void handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
 {
   mica_op_t *kv_ptr = loc_entry->kv_ptr;
 
-  // If this fails to grab a kv_ptr it will try to update
-  // the (rmw_id + state) that is being waited on.
-  // If it updates it will zero the back-off counter
   if (!attempt_to_grab_kv_ptr_after_waiting(cp_core_ctx->stall_info, kv_ptr, loc_entry,
                                             sess_i, t_id)) {
-    if (ENABLE_ASSERTIONS) assert(cp_core_ctx->stall_info->stalled);
+    check_handle_needs_kv_ptr_state(cp_core_ctx, sess_i);
     loc_entry->back_off_cntr++;
     if (loc_entry->back_off_cntr == RMW_BACK_OFF_TIMEOUT) {
-      //   my_printf(yellow, "Wrkr %u  sess %u waiting for an rmw on key %u on log %u, back_of cntr %u waiting on rmw_id %u state %u \n",
-      //                 t_id, sess_i,loc_entry->key.bkt, loc_entry->help_rmw->log_no, loc_entry->back_off_cntr,
-      //                 loc_entry->help_rmw->rmw_id.id,
-      //                 loc_entry->help_rmw->state);
+      print_needs_kv_ptr_timeout_expires(loc_entry, sess_i, t_id);
 
-      // This is failure-related help/stealing it should not be that we are being held up by the local machine
-      // However we may wait on a "local" glob sess id, because it is being helped
-      // if have accepted a value help it
       if (loc_entry->help_rmw->state == ACCEPTED)
-        attempt_to_help_a_locally_accepted_value(cp_core_ctx->stall_info, loc_entry, kv_ptr, t_id); // zeroes the back-off counter
-        // if have received a proposal, send your own proposal
+        attempt_to_help_a_locally_accepted_value(cp_core_ctx->stall_info, loc_entry, kv_ptr, t_id);
       else  if (loc_entry->help_rmw->state == PROPOSED) {
-        attempt_to_steal_a_proposed_kv_ptr(loc_entry, kv_ptr, sess_i, t_id); // zeroes the back-off counter
+        attempt_to_steal_a_proposed_kv_ptr(loc_entry, kv_ptr, sess_i, t_id);
       }
     }
   }
-  if (loc_entry->state == PROPOSED) {
-    loc_entry->back_off_cntr = 0;
-    cp_prop_insert(cp_core_ctx->netw_ctx, loc_entry);
-  }
-  check_state_with_allowed_flags(6, (int) loc_entry->state, INVALID_RMW, PROPOSED, NEEDS_KV_PTR,
-                                 ACCEPTED, MUST_BCAST_COMMITS);
+  clean_up_if_proposed_after_needs_kv_ptr(cp_core_ctx, loc_entry);
 
+  check_end_handle_needs_kv_ptr_state(loc_entry);
 }
 
 
 
 
 
-void inspect_props_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
-                                       loc_entry_t *loc_entry);
-
-void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
-                                         loc_entry_t *loc_entry);
 
 
 // Worker inspects its local RMW entries
