@@ -1014,9 +1014,5 @@ static inline void print_rmw_tries_first_time(uint16_t op_i,
   }
 }
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+
 #endif

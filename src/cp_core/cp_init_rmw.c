@@ -3,6 +3,7 @@
 //
 
 #include <cp_core_interface.h>
+#include <cp_core_generic_util.h>
 
 
 

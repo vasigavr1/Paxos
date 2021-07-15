@@ -2,8 +2,29 @@
 // Created by vasilis on 14/07/2021.
 //
 
-#include "cp_core_interface.h"
 
+#include <cp_core_generic_util.h>
+
+
+
+
+// Check if the kv_ptr state that is blocking a local RMW is persisting
+static inline bool kv_ptr_state_has_not_changed(mica_op_t *kv_ptr,
+                                                struct rmw_help_entry *help_rmw)
+{
+  return kv_ptr->state == help_rmw->state &&
+         rmw_ids_are_equal(&help_rmw->rmw_id, &kv_ptr->rmw_id) &&
+         (compare_ts(&kv_ptr->prop_ts, &help_rmw->ts) == EQUAL);
+}
+
+// Check if the kv_ptr state that is blocking a local RMW is persisting
+static inline bool kv_ptr_state_has_changed(mica_op_t *kv_ptr,
+                                            struct rmw_help_entry *help_rmw)
+{
+  return kv_ptr->state != help_rmw->state ||
+         (!rmw_ids_are_equal(&help_rmw->rmw_id, &kv_ptr->rmw_id)) ||
+         (compare_ts(&kv_ptr->prop_ts, &help_rmw->ts) != EQUAL);
+}
 
 static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,
                                                      loc_entry_t *loc_entry,
@@ -20,10 +41,6 @@ static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,
   print_when_grabbing_kv_ptr(loc_entry, t_id);
   return true;
 }
-
-
-
-
 
 static inline void if_invalid_grab_if_changed_keep_track_of_the_new_rmw(mica_op_t *kv_ptr,
                                                                         loc_entry_t *loc_entry,

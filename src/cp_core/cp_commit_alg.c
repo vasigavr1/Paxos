@@ -3,6 +3,130 @@
 //
 
 #include <cp_core_interface.h>
+#include <cp_core_generic_util.h>
+
+
+static inline void process_commit_flags(void* rmw, loc_entry_t *loc_entry, uint8_t *flag)
+{
+  struct commit *com = (struct commit *) rmw;
+
+  switch (*flag) {
+    case FROM_ALREADY_COMM_REP:
+      if (loc_entry->helping_flag == HELPING) {
+        *flag = FROM_ALREADY_COMM_REP_HELP;
+      }
+      break;
+    case FROM_LOCAL:
+      if (loc_entry->helping_flag == HELPING)
+        *flag = FROM_LOCAL_HELP;
+      else if (ENABLE_ASSERTIONS)
+        assert(loc_entry->log_no == loc_entry->accepted_log_no);
+      break;
+    case FROM_REMOTE_COMMIT:
+      if (com->opcode == COMMIT_OP_NO_VAL)
+        *flag = FROM_REMOTE_COMMIT_NO_VAL;
+      break;
+    case FROM_LOCAL_ACQUIRE:
+    case FROM_OOE_READ:
+    case FROM_LOG_TOO_LOW_REP:
+      break;
+    default:
+      if (ENABLE_ASSERTIONS) {printf("%u \n", *flag); assert(false);}
+  }
+}
+
+static inline void fill_commit_info(commit_info_t *com_info, uint8_t flag,
+                                    uint64_t rmw_id,
+                                    uint32_t log_no, ts_tuple_t base_ts,
+                                    uint8_t *value, bool overwrite_kv)
+{
+  check_fill_com_info(log_no);
+  com_info->rmw_id.id = rmw_id;
+  com_info->log_no = log_no;
+  com_info->base_ts = base_ts;
+  com_info->value = value;
+  com_info->overwrite_kv = overwrite_kv;
+  com_info->message = committing_flag_to_str(flag);
+  com_info->no_value = false;
+  com_info->flag = flag;
+}
+
+
+static inline void fill_commit_info_from_rep(commit_info_t *com_info,
+                                             void* rmw,
+                                             uint8_t flag)
+{
+  ts_tuple_t base_ts = {0, 0};
+  cp_rmw_rep_t *rep = (struct rmw_rep_last_committed *) rmw;
+  assign_netw_ts_to_ts(&base_ts, &rep->ts);
+  fill_commit_info(com_info, flag, rep->rmw_id,
+                   rep->log_no_or_base_version,
+                   base_ts, rep->value, true);
+}
+
+static inline void fill_commit_info_from_local(commit_info_t *com_info,
+                                               loc_entry_t *loc_entry,
+                                               uint8_t flag)
+{
+  fill_commit_info(com_info, flag, loc_entry->rmw_id.id,
+                   loc_entry->accepted_log_no, loc_entry->base_ts,
+                   loc_entry->value_to_write, loc_entry->rmw_is_successful);
+}
+
+static inline void fill_commit_info_from_loc_help(commit_info_t *com_info,
+                                                  loc_entry_t *help_loc_entry,
+                                                  uint8_t flag)
+{
+
+  fill_commit_info(com_info, flag, help_loc_entry->rmw_id.id,
+                   help_loc_entry->log_no,
+                   help_loc_entry->base_ts,
+                   help_loc_entry->value_to_write,
+                   true);
+}
+
+static inline void fill_commit_info_from_rem_commit(commit_info_t *com_info,
+                                                    void* rmw,
+                                                    uint8_t flag)
+{
+  ts_tuple_t base_ts = {0, 0};
+  cp_com_t *com = (cp_com_t *) rmw;
+  assert(com->opcode == COMMIT_OP);
+  assign_netw_ts_to_ts(&base_ts, &com->base_ts);
+  fill_commit_info(com_info, flag, com->t_rmw_id,
+                   com->log_no, base_ts, com->value, true);
+}
+
+static inline void fill_commit_info_from_rem_commit_no_val(commit_info_t *com_info,
+                                                           void* rmw,
+                                                           uint8_t flag)
+{
+  ts_tuple_t base_ts = {0, 0};
+  cp_com_no_val_t *com_no_val = (cp_com_no_val_t *) rmw;
+  fill_commit_info(com_info, flag, com_no_val->t_rmw_id,
+                   com_no_val->log_no, base_ts, NULL, true);
+  com_info->no_value = true;
+}
+
+
+
+
+static inline bool can_process_com_no_value(mica_op_t *kv_ptr,
+                                            commit_info_t *com_info,
+                                            uint16_t t_id)
+{
+
+  if (kv_ptr->last_committed_log_no < com_info->log_no) {
+    com_info->base_ts = kv_ptr->base_acc_ts;
+    com_info->value = kv_ptr->last_accepted_value;
+    return true;
+  }
+
+  return false;
+}
+
+
+
 
 // Check if it's a commit without a value -- if it cannot be committed
 // then do not attempt to overwrite the value and timestamp, because the commit's

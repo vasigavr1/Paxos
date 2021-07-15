@@ -2,7 +2,7 @@
 // Created by vasilis on 15/07/2021.
 //
 
-#include <cp_core_interface.h>
+#include <cp_core_generic_util.h>
 
 
 typedef struct retry_flags{

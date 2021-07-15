@@ -2,7 +2,51 @@
 // Created by vasilis on 15/07/2021.
 //
 
+#include <cp_core_generic_util.h>
 #include <cp_core_interface.h>
+
+static inline bool same_rmw_id_same_ts_and_invalid(mica_op_t *kv_ptr, loc_entry_t *loc_entry)
+{
+  return rmw_ids_are_equal(&loc_entry->rmw_id, &kv_ptr->rmw_id) &&
+         kv_ptr->state != INVALID_RMW &&
+         compare_ts(&loc_entry->new_ts, &kv_ptr->prop_ts) == EQUAL;
+}
+
+static inline bool find_out_if_can_accept_help_locally(mica_op_t *kv_ptr,
+                                                       loc_entry_t *loc_entry,
+                                                       loc_entry_t* help_loc_entry,
+                                                       uint16_t t_id)
+{
+  bool kv_ptr_is_the_same, kv_ptr_is_invalid_but_not_committed,
+      helping_stuck_accept, propose_locally_accepted;
+
+  compare_t comp = compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts);
+  bool same_rmw_id_log = same_rmw_id_same_log(kv_ptr, help_loc_entry);
+  bool entry_still_mine = help_loc_entry->log_no == kv_ptr->log_no &&
+                          comp == EQUAL &&
+                          rmw_ids_are_equal(&kv_ptr->rmw_id, &loc_entry->rmw_id);
+
+  kv_ptr_is_the_same = kv_ptr->state == PROPOSED  && entry_still_mine;
+
+  kv_ptr_is_invalid_but_not_committed = kv_ptr->state == INVALID_RMW &&
+                                        kv_ptr->last_committed_log_no < help_loc_entry->log_no;
+
+  helping_stuck_accept = loc_entry->helping_flag == PROPOSE_NOT_LOCALLY_ACKED &&
+                         same_rmw_id_log &&
+                         kv_ptr->state == ACCEPTED &&
+                         comp != GREATER;
+  // When retrying after accepts fail, we must first send proposes but if the local state is still accepted,
+  // we can't downgrade it to proposed, so if we are deemed to help another RMW, we may come back to find
+  // our original Accept still here
+  propose_locally_accepted = kv_ptr->state == ACCEPTED  && entry_still_mine;
+
+  checks_and_prints_local_accept_help(loc_entry, help_loc_entry, kv_ptr, kv_ptr_is_the_same,
+                                      kv_ptr_is_invalid_but_not_committed,
+                                      helping_stuck_accept, propose_locally_accepted, t_id);
+
+  return kv_ptr_is_the_same   || kv_ptr_is_invalid_but_not_committed ||
+         helping_stuck_accept || propose_locally_accepted;
+}
 
 static inline void take_kv_ptr_to_acc_state(mica_op_t *kv_ptr,
                                             loc_entry_t *loc_entry,

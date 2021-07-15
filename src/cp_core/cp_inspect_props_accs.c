@@ -5,6 +5,8 @@
 
 #include <cp_core_generic_util.h>
 
+
+
 static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_entry)
 {
   check_zero_out_the_rmw_reply(loc_entry);
@@ -15,6 +17,8 @@ static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_en
   if (ENABLE_ALL_ABOARD) loc_entry->all_aboard_time_out = 0;
   check_after_zeroing_out_rmw_reply(loc_entry);
 }
+
+
 
 static inline bool set_up_broadcast_already_committed_if_needed(loc_entry_t *loc_entry)
 {
@@ -69,6 +73,17 @@ static inline void prop_acc_handle_seen_higher_prop(loc_entry_t *loc_entry)
 /*
  * ----ACCEPTS----
  **/
+
+static inline void reset_all_aboard_accept(loc_entry_t *loc_entry,
+                                           uint16_t t_id)
+{
+  if (ENABLE_ALL_ABOARD && loc_entry->all_aboard) {
+    if (ENABLE_STAT_COUNTING && loc_entry->state == MUST_BCAST_COMMITS) {
+      t_stats[t_id].all_aboard_rmws++;
+    }
+    loc_entry->all_aboard = false;
+  }
+}
 
 static inline void clean_up_after_inspecting_accept(loc_entry_t *loc_entry,
                                                     uint16_t t_id)
@@ -197,7 +212,15 @@ inline void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
  **/
 
 
+static inline void set_kilalble_flag(loc_entry_t *loc_entry) {
+  if (ENABLE_CAS_CANCELLING) {
+    loc_entry->killable = (loc_entry->state == RETRY_WITH_BIGGER_TS ||
+                           loc_entry->state == NEEDS_KV_PTR) &&
+                          loc_entry->accepted_log_no == 0 &&
+                          loc_entry->opcode == COMPARE_AND_SWAP_WEAK;
 
+  }
+}
 
 
 static inline void zero_out_the_rmw_reply_if_not_gone_accepted(loc_entry_t *loc_entry)

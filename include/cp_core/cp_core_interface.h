@@ -5,7 +5,11 @@
 #ifndef CP_CORE_UTIL_H
 #define CP_CORE_UTIL_H
 
-#include <cp_core_generic_util.h>
+
+
+#include <cp_config.h>
+#include <cp_debug_util.h>
+#include "cp_main.h"
 
 
 
@@ -57,6 +61,43 @@ void on_receiving_remote_commit(mica_op_t *kv_ptr,
                                 cp_com_mes_t *com_mes,
                                 uint16_t op_i,
                                 uint16_t t_id);
+
+// Fill a write message with a commit
+static inline void fill_commit_message_from_l_entry(struct commit *com, loc_entry_t *loc_entry,
+                                                    uint8_t broadcast_state, uint16_t t_id)
+{
+  check_loc_entry_when_filling_com(loc_entry, broadcast_state, t_id);
+
+  memcpy(&com->key, &loc_entry->key, KEY_SIZE);
+  com->t_rmw_id = loc_entry->rmw_id.id;
+  com->base_ts.m_id = loc_entry->base_ts.m_id;
+  if (loc_entry->avoid_val_in_com) {
+    assert(ENABLE_COMMITS_WITH_NO_VAL);
+    com->opcode = COMMIT_OP_NO_VAL;
+    loc_entry->avoid_val_in_com = false;
+    com->base_ts.version = loc_entry->log_no;
+  }
+  else {
+    com->opcode = COMMIT_OP;
+    com->log_no = loc_entry->log_no;
+    com->base_ts.version = loc_entry->base_ts.version;
+    if (broadcast_state == MUST_BCAST_COMMITS && !loc_entry->rmw_is_successful) {
+      memcpy(com->value, loc_entry->value_to_read, (size_t) RMW_VALUE_SIZE);
+    } else {
+      memcpy(com->value, loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
+    }
+    //print_treiber_top((struct top *) com->value, "Sending commit", cyan);
+    if (ENABLE_ASSERTIONS) {
+      assert(com->log_no > 0);
+      assert(com->t_rmw_id > 0);
+    }
+  }
+}
+
+
+
+
+
 
 
 #endif //CP_CORE_UTIL_H

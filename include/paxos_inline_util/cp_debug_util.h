@@ -920,33 +920,36 @@ static inline void checks_and_prints_local_accept_help(loc_entry_t *loc_entry,
                                                        bool propose_locally_accepted,
                                                        uint16_t t_id)
 {
-  if (ENABLE_ASSERTIONS) {
-    assert(compare_ts(&kv_ptr->prop_ts, &help_loc_entry->new_ts) != SMALLER);
-    assert(kv_ptr->last_committed_log_no == help_loc_entry->log_no - 1);
-    if (kv_ptr_is_invalid_but_not_committed) {
-      printf("last com/log/help-log/loc-log %u/%u/%u/%u \n",
-             kv_ptr->last_committed_log_no, kv_ptr->log_no,
-             help_loc_entry->log_no, loc_entry->log_no);
-      assert(false);
-    }
-    // if the TS are equal it better be that it is because it remembers the proposed request
-    if (kv_ptr->state != INVALID_RMW &&
-        compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL &&
-        !helping_stuck_accept &&
-        !propose_locally_accepted) {
-      assert(kv_ptr->rmw_id.id == loc_entry->rmw_id.id);
-      if (kv_ptr->state != PROPOSED) {
-        my_printf(red, "Wrkr: %u, state %u \n", t_id, kv_ptr->state);
+  if (kv_ptr_is_the_same   || kv_ptr_is_invalid_but_not_committed ||
+      helping_stuck_accept || propose_locally_accepted) {
+    if (ENABLE_ASSERTIONS) {
+      assert(compare_ts(&kv_ptr->prop_ts, &help_loc_entry->new_ts) != SMALLER);
+      assert(kv_ptr->last_committed_log_no == help_loc_entry->log_no - 1);
+      if (kv_ptr_is_invalid_but_not_committed) {
+        printf("last com/log/help-log/loc-log %u/%u/%u/%u \n",
+               kv_ptr->last_committed_log_no, kv_ptr->log_no,
+               help_loc_entry->log_no, loc_entry->log_no);
         assert(false);
       }
+      // if the TS are equal it better be that it is because it remembers the proposed request
+      if (kv_ptr->state != INVALID_RMW &&
+          compare_ts(&kv_ptr->prop_ts, &loc_entry->new_ts) == EQUAL &&
+          !helping_stuck_accept &&
+          !propose_locally_accepted) {
+        assert(kv_ptr->rmw_id.id == loc_entry->rmw_id.id);
+        if (kv_ptr->state != PROPOSED) {
+          my_printf(red, "Wrkr: %u, state %u \n", t_id, kv_ptr->state);
+          assert(false);
+        }
+      }
+      if (propose_locally_accepted)
+        assert(compare_ts(&help_loc_entry->new_ts, &kv_ptr->accepted_ts) == GREATER);
     }
-    if (propose_locally_accepted)
-      assert(compare_ts(&help_loc_entry->new_ts, &kv_ptr->accepted_ts) == GREATER);
+    if (DEBUG_RMW)
+      my_printf(green, "Wrkr %u on attempting to locally accept to help "
+                       "got rmw id %u, accepted locally \n",
+                t_id, help_loc_entry->rmw_id.id);
   }
-  if (DEBUG_RMW)
-    my_printf(green, "Wrkr %u on attempting to locally accept to help "
-                "got rmw id %u, accepted locally \n",
-              t_id, help_loc_entry->rmw_id.id);
 }
 
 
