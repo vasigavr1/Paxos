@@ -2,7 +2,7 @@
 // Created by vasilis on 06/07/2021.
 //
 
-#include <cp_core_util.h>
+#include <cp_core_interface.h>
 
 // Check if it's a commit without a value -- if it cannot be committed
 // then do not attempt to overwrite the value and timestamp, because the commit's
@@ -53,12 +53,29 @@ static inline void advance_last_comm_log_no_and_rmw_id(mica_op_t *kv_ptr,
   }
 }
 
+
+// when committing register global_sess id as committed
+static inline void register_committed_rmw_id (uint64_t rmw_id,
+                                              uint16_t t_id)
+{
+  uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
+  uint32_t debug_cntr = 0;
+  uint64_t tmp_rmw_id = committed_glob_sess_rmw_id[glob_sess_id];
+  do {
+    debug_stalling_on_lock(&debug_cntr, "registering rmw", t_id);
+    if (rmw_id <= tmp_rmw_id) return;
+  } while (!atomic_compare_exchange_strong(&committed_glob_sess_rmw_id[glob_sess_id],
+                                           &tmp_rmw_id, rmw_id));
+}
+
+
+
+
 static inline void register_commit(mica_op_t *kv_ptr,
                                    commit_info_t *com_info,
                                    uint16_t t_id)
 {
   register_committed_rmw_id(com_info->rmw_id.id, t_id);
-
   check_registered_against_kv_ptr_last_committed(kv_ptr, com_info->rmw_id.id,
                                                  com_info->message, t_id);
 }
@@ -155,4 +172,15 @@ inline void act_on_quorum_of_commit_acks(cp_core_ctx_t *cp_core_ctx,
     commit_rmw(loc_entry->kv_ptr, NULL, loc_entry, FROM_LOCAL, cp_core_ctx->t_id);
 
   free_session_and_reinstate_loc_entry(cp_core_ctx->stall_info, loc_entry,cp_core_ctx->t_id);
+}
+
+inline void on_receiving_remote_commit(mica_op_t *kv_ptr,
+                                       cp_com_t *com,
+                                       cp_com_mes_t *com_mes,
+                                       uint16_t op_i,
+                                       uint16_t t_id)
+{
+  print_on_remote_com(com, op_i, t_id);
+  commit_rmw(kv_ptr, (void *) com, NULL, FROM_REMOTE_COMMIT, t_id);
+  print_log_remote_com(com, com_mes, kv_ptr, t_id);
 }

@@ -2,7 +2,7 @@
 // Created by vasilis on 14/07/2021.
 //
 
-#include "cp_core_util.h"
+#include "cp_core_interface.h"
 
 
 static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,

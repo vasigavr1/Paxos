@@ -11,7 +11,7 @@
 #include "od_latency_util.h"
 #include "cp_main.h"
 #include "cp_debug_util.h"
-#include "cp_core_util.h"
+#include "cp_core_interface.h"
 #include "cp_config.h"
 
 //-------------------------------------------------------------------------------------

@@ -12,6 +12,36 @@
 #include "cp_core_debug.h"
 #include "od_wrkr_side_calls.h"
 
+
+void take_kv_ptr_with_higher_TS(sess_stall_t *stall_info,
+                                loc_entry_t *loc_entry,
+                                bool from_propose,
+                                uint16_t t_id);
+
+void handle_needs_kv_ptr_state(cp_core_ctx_t *cp_core_ctx,
+                               loc_entry_t *loc_entry,
+                               uint16_t sess_i,
+                               uint16_t t_id);
+
+void inspect_props_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                       loc_entry_t *loc_entry);
+
+void inspect_accepts_if_ready_to_inspect(cp_core_ctx_t *cp_core_ctx,
+                                         loc_entry_t *loc_entry);
+
+void commit_rmw(mica_op_t *kv_ptr,
+                void* rmw,
+                loc_entry_t *loc_entry,
+                uint8_t flag,
+                uint16_t t_id);
+
+void attempt_local_accept_to_help(loc_entry_t *loc_entry,
+                                  uint16_t t_id);
+void attempt_local_accept(loc_entry_t *loc_entry,
+                          uint16_t t_id);
+
+
+
 static inline void lock_kv_ptr(mica_op_t *kv_ptr, uint16_t t_id)
 {
   lock_seqlock(&kv_ptr->seqlock);
@@ -28,16 +58,7 @@ static inline void unlock_kv_ptr(mica_op_t *kv_ptr, uint16_t t_id)
 /* ---------------------------------------------------------------------------
 //------------------------------ GENERIC UTILITY------------------------------------------
 //---------------------------------------------------------------------------*/
-static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_entry)
-{
-  check_zero_out_the_rmw_reply(loc_entry);
-  loc_entry->help_loc_entry->state = INVALID_RMW;
-  memset(&loc_entry->rmw_reps, 0, sizeof(rmw_rep_info_t));
 
-  loc_entry->back_off_cntr = 0;
-  if (ENABLE_ALL_ABOARD) loc_entry->all_aboard_time_out = 0;
-  check_after_zeroing_out_rmw_reply(loc_entry);
-}
 
 
 // After having helped another RMW, bring your own RMW back into the local entry
@@ -117,29 +138,7 @@ static inline void local_rmw_ack(loc_entry_t *loc_entry)
 }
 
 
-// when committing register global_sess id as committed
-static inline void register_committed_rmw_id (uint64_t rmw_id,
-                                              uint16_t t_id)
-{
-  uint64_t glob_sess_id = rmw_id % GLOBAL_SESSION_NUM;
-  uint64_t tmp_rmw_id, debug_cntr = 0;
-  if (ENABLE_ASSERTIONS) assert(glob_sess_id < GLOBAL_SESSION_NUM);
-  tmp_rmw_id = committed_glob_sess_rmw_id[glob_sess_id];
-  do {
-    if (ENABLE_ASSERTIONS) {
-      debug_cntr++;
-      if (debug_cntr > 100) {
-        my_printf(red, "stuck on registering glob sess id %u \n", debug_cntr);
-        debug_cntr = 0;
-      }
-    }
-    if (rmw_id <= tmp_rmw_id) return;
-  } while (!atomic_compare_exchange_strong(&committed_glob_sess_rmw_id[glob_sess_id],
-                                           &tmp_rmw_id, rmw_id));
-  MY_ASSERT(rmw_id <= committed_glob_sess_rmw_id[glob_sess_id],
-            "After registering: rmw_id/registered %u/%u glob sess_id %u \n",
-            rmw_id, committed_glob_sess_rmw_id[glob_sess_id], glob_sess_id);
-}
+
 
 /* ---------------------------------------------------------------------------
 //------------------------------ACCEPTING------------------------------------------

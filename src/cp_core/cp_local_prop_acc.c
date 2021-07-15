@@ -2,7 +2,7 @@
 // Created by vasilis on 15/07/2021.
 //
 
-#include <cp_core_util.h>
+#include <cp_core_interface.h>
 
 static inline void take_kv_ptr_to_acc_state(mica_op_t *kv_ptr,
                                             loc_entry_t *loc_entry,

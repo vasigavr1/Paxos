@@ -628,6 +628,10 @@ static inline void check_registered_against_kv_ptr_last_committed(mica_op_t *kv_
 {
   if (ENABLE_ASSERTIONS) {
     uint32_t committed_glob_ses_id = (uint32_t)(committed_id % GLOBAL_SESSION_NUM);
+    MY_ASSERT(committed_id <= committed_glob_sess_rmw_id[committed_glob_ses_id],
+              "After registering: rmw_id/registered %u/%u glob sess_id %u \n",
+              committed_id, committed_glob_sess_rmw_id[committed_glob_ses_id], committed_glob_ses_id);
+
     uint32_t glob_sess_id = (uint32_t)(kv_ptr->last_committed_rmw_id.id % GLOBAL_SESSION_NUM);
     uint64_t id = kv_ptr->last_committed_rmw_id.id;
     assert(glob_sess_id < GLOBAL_SESSION_NUM);

@@ -2,7 +2,19 @@
 // Created by vasilis on 07/07/2021.
 //
 
-#include <cp_core_util.h>
+
+#include <cp_core_generic_util.h>
+
+static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_entry)
+{
+  check_zero_out_the_rmw_reply(loc_entry);
+  loc_entry->help_loc_entry->state = INVALID_RMW;
+  memset(&loc_entry->rmw_reps, 0, sizeof(rmw_rep_info_t));
+
+  loc_entry->back_off_cntr = 0;
+  if (ENABLE_ALL_ABOARD) loc_entry->all_aboard_time_out = 0;
+  check_after_zeroing_out_rmw_reply(loc_entry);
+}
 
 static inline bool set_up_broadcast_already_committed_if_needed(loc_entry_t *loc_entry)
 {
