@@ -22,14 +22,7 @@ static inline bool grab_invalid_kv_ptr_after_waiting(mica_op_t *kv_ptr,
 }
 
 
-static inline void save_the_info_of_the_kv_ptr_owner(mica_op_t *kv_ptr,
-                                                     loc_entry_t *loc_entry)
-{
-  loc_entry->help_rmw->state = kv_ptr->state;
-  assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
-  loc_entry->help_rmw->ts = kv_ptr->prop_ts;
-  loc_entry->help_rmw->log_no = kv_ptr->log_no;
-}
+
 
 
 static inline void if_invalid_grab_if_changed_keep_track_of_the_new_rmw(mica_op_t *kv_ptr,

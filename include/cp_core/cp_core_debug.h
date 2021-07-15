@@ -993,17 +993,22 @@ static inline void check_session_id(uint16_t session_id)
   }
 }
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+static inline void debug_assign_help_loc_entry_kv_ptr(mica_op_t *kv_ptr,
+                                                                  loc_entry_t *loc_entry)
+{
+  if (ENABLE_ASSERTIONS) {
+    loc_entry->help_loc_entry->kv_ptr = kv_ptr;
+  }
+}
 
-//static inline void check_()
-//{
-//  if (ENABLE_ASSERTIONS) {
-//  }
-//}
+static inline void print_rmw_tries_first_time(uint16_t op_i,
+                                              uint16_t t_id)
+{
+  if (ENABLE_ASSERTIONS) {
+    if (DEBUG_RMW)
+      my_printf(green, "Worker %u trying a local RMW on op %u\n", t_id, op_i);
+  }
+}
 
 //static inline void check_()
 //{

@@ -16,53 +16,7 @@
 
 
 
-static inline void KVS_from_trace_rmw(trace_op_t *op,
-                                      mica_op_t *kv_ptr,
-                                      cp_ctx_t *cp_ctx,
-                                      uint16_t op_i, uint16_t t_id)
-{
-  loc_entry_t *loc_entry = &cp_ctx->cp_core_ctx->rmw_entries[op->session_id];
-  init_loc_entry(op, t_id, loc_entry);
-  if (DEBUG_RMW) my_printf(green, "Worker %u trying a local RMW on op %u\n", t_id, op_i);
-  uint32_t new_version = (ENABLE_ALL_ABOARD && op->attempt_all_aboard) ?
-                         ALL_ABOARD_TS : PAXOS_TS;
-  uint8_t state = (uint8_t) (loc_entry->all_aboard ? ACCEPTED : PROPOSED);
-  __builtin_prefetch(loc_entry->compare_val, 0, 0);
-  lock_kv_ptr(kv_ptr, t_id);
-  {
-    check_trace_op_key_vs_kv_ptr(op, kv_ptr);
-    check_log_nos_of_kv_ptr(kv_ptr, "KVS_batch_op_trace", t_id);
-    if (does_rmw_fail_early(op, kv_ptr, t_id)) {
-      loc_entry->state = CAS_FAILED;
-    }
-    else if (kv_ptr->state == INVALID_RMW) {
-      activate_kv_pair(state, new_version, kv_ptr, op->opcode,
-                       (uint8_t) machine_id, loc_entry, loc_entry->rmw_id.id,
-                       kv_ptr->last_committed_log_no + 1, t_id, ENABLE_ASSERTIONS ? "batch to trace" : NULL);
-      loc_entry->state = state;
-      if (ENABLE_ASSERTIONS) assert(kv_ptr->log_no == kv_ptr->last_committed_log_no + 1);
-      loc_entry->log_no = kv_ptr->log_no;
-    }
-    else {
-      // This is the state the RMW will wait on
-      loc_entry->state = NEEDS_KV_PTR;
-      // Set up the state that the RMW should wait on
-      loc_entry->help_rmw->rmw_id = kv_ptr->rmw_id;
-      loc_entry->help_rmw->state = kv_ptr->state;
-      loc_entry->help_rmw->ts = kv_ptr->prop_ts;
-      loc_entry->help_rmw->log_no = kv_ptr->log_no;
-    }
-  }
-  loc_entry->base_ts = kv_ptr->ts;
-  unlock_kv_ptr(kv_ptr, t_id);
 
-  loc_entry->kv_ptr = kv_ptr;
-  if (ENABLE_ASSERTIONS) {
-    loc_entry->help_loc_entry->kv_ptr = kv_ptr;
-  }
-  // We need to put the new timestamp in the op too, both to send it and to store it for later
-  op->ts.version = new_version;
-}
 
 
 static inline void cp_KVS_batch_op_trace(uint16_t op_num,
@@ -87,8 +41,8 @@ static inline void cp_KVS_batch_op_trace(uint16_t op_num,
       case COMPARE_AND_SWAP_WEAK:
       case COMPARE_AND_SWAP_STRONG:
       case RMW_PLAIN_WRITE:
-        KVS_from_trace_rmw(&op[op_i], kv_ptr[op_i],
-                           cp_ctx, op_i, t_id);
+        rmw_tries_to_get_kv_ptr_first_time(&op[op_i], kv_ptr[op_i],
+                                           cp_ctx->cp_core_ctx, op_i, t_id);
         break;
       default: if (ENABLE_ASSERTIONS) {
           my_printf(red, "Wrkr %u: KVS_batch_op_trace wrong opcode in KVS: %d, req %d \n",

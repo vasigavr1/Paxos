@@ -404,6 +404,16 @@ static inline bool rmw_fails_with_loc_entry(loc_entry_t *loc_entry, mica_op_t *k
  * --------------------BACK-OFF UTILITY-------------------------------------
  * --------------------------------------------------------------------------*/
 
+static inline void save_the_info_of_the_kv_ptr_owner(mica_op_t *kv_ptr,
+                                                     loc_entry_t *loc_entry)
+{
+  loc_entry->help_rmw->state = kv_ptr->state;
+  assign_second_rmw_id_to_first(&loc_entry->help_rmw->rmw_id, &kv_ptr->rmw_id);
+  loc_entry->help_rmw->ts = kv_ptr->prop_ts;
+  loc_entry->help_rmw->log_no = kv_ptr->log_no;
+}
+
+
 // Check if the kv_ptr state that is blocking a local RMW is persisting
 static inline bool kv_ptr_state_has_not_changed(mica_op_t *kv_ptr,
                                                 struct rmw_help_entry *help_rmw)
