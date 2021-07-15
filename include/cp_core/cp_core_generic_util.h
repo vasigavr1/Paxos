@@ -525,10 +525,105 @@ static inline void fill_reply_entry_with_committed_RMW (mica_op_t *kv_ptr,
   //         t_id, rep->opcode, rep->log_no, rep->rmw_id, rep->glob_sess_id);
 }
 
+// If a local RMW managed to grab a kv_ptr, then it sets up its local entry
+static inline void fill_loc_rmw_entry_on_grabbing_kv_ptr(loc_entry_t *loc_entry,
+                                                         uint32_t version, uint8_t state,
+                                                         uint16_t sess_i, uint16_t t_id)
+{
+  check_when_filling_loc_entry(loc_entry, sess_i, version, t_id);
+  local_rmw_ack(loc_entry);
+  loc_entry->state = state;
+  loc_entry->new_ts.version = version;
+  loc_entry->new_ts.m_id = (uint8_t) machine_id;
+}
 
 
 
 
+// Activate the entry that belongs to a given key to initiate an RMW (either a local or a remote)
+static inline void activate_kv_pair(uint8_t state, uint32_t new_version, mica_op_t *kv_ptr,
+                                    uint8_t opcode, uint8_t new_ts_m_id, loc_entry_t *loc_entry,
+                                    uint64_t rmw_id,
+                                    uint32_t log_no, uint16_t t_id, const char *message)
+{
+  check_activate_kv_pair(state, kv_ptr, log_no, message);
 
+  kv_ptr->opcode = opcode;
+  kv_ptr->prop_ts.m_id = new_ts_m_id;
+  kv_ptr->prop_ts.version = new_version;
+  kv_ptr->rmw_id.id = rmw_id;
+  kv_ptr->state = state;
+  kv_ptr->log_no = log_no;
+
+  if (state == ACCEPTED) {
+    check_activate_kv_pair_accepted(kv_ptr, new_version, new_ts_m_id);
+    kv_ptr->accepted_ts = kv_ptr->prop_ts;
+    kv_ptr->accepted_log_no = log_no;
+    if (loc_entry != NULL && loc_entry->all_aboard) {
+      perform_the_rmw_on_the_loc_entry(kv_ptr, loc_entry, t_id);
+    }
+  }
+  check_after_activate_kv_pair(kv_ptr, message, state, t_id);
+}
+
+ // Initialize a local  RMW entry on the first time it gets allocated
+static inline void init_loc_entry(trace_op_t *op,
+                                  uint16_t t_id,
+                                  loc_entry_t* loc_entry)
+{
+  check_when_init_loc_entry(loc_entry, op);
+  loc_entry->opcode = op->opcode;
+  if (opcode_is_compare_rmw(op->opcode) || op->opcode == RMW_PLAIN_WRITE)
+    memcpy(loc_entry->value_to_write, op->value_to_write, op->real_val_len);
+  loc_entry->killable = op->opcode == COMPARE_AND_SWAP_WEAK;
+  if (opcode_is_compare_rmw(op->opcode))
+    loc_entry->compare_val = op->value_to_read; //expected value
+  else if (op->opcode == FETCH_AND_ADD) {
+    loc_entry->compare_val = op->value_to_write; // value to be added
+  }
+  loc_entry->fp_detected = false;
+  loc_entry->rmw_val_len = op->real_val_len;
+  loc_entry->rmw_is_successful = false;
+  loc_entry->all_aboard = ENABLE_ALL_ABOARD && op->attempt_all_aboard;
+  loc_entry->avoid_val_in_com = false;
+  loc_entry->base_ts_found = false;
+  loc_entry->all_aboard_time_out = 0;
+  memcpy(&loc_entry->key, &op->key, KEY_SIZE);
+  memset(&loc_entry->rmw_reps, 0, sizeof(struct rmw_rep_info));
+  loc_entry->index_to_req_array = op->index_to_req_array;
+
+  loc_entry->back_off_cntr = 0;
+  loc_entry->log_too_high_cntr = 0;
+  loc_entry->helping_flag = NOT_HELPING;
+  loc_entry->rmw_id.id+= GLOBAL_SESSION_NUM;
+  advance_loc_entry_l_id(loc_entry, t_id);
+  loc_entry->accepted_log_no = 0;
+  loc_entry->help_loc_entry->state = INVALID_RMW;
+  check_loc_entry_init_rmw_id(loc_entry, t_id);
+}
+
+// When time-out-ing on a stuck Accepted value, and try to help it, you need to first propose your own
+static inline void set_up_a_proposed_but_not_locally_acked_entry(sess_stall_t *stall_info,
+                                                                 mica_op_t  *kv_ptr,
+                                                                 loc_entry_t *loc_entry,
+                                                                 bool helping_myself,
+                                                                 uint16_t t_id)
+{
+  checks_and_prints_proposed_but_not_locally_acked(stall_info, kv_ptr, loc_entry, t_id);
+  loc_entry_t *help_loc_entry = loc_entry->help_loc_entry;
+  loc_entry->state = PROPOSED;
+  help_loc_entry->state = ACCEPTED;
+  if (helping_myself) {
+    loc_entry->helping_flag = PROPOSE_LOCALLY_ACCEPTED;
+  }
+  else {
+    loc_entry->helping_flag = PROPOSE_NOT_LOCALLY_ACKED;
+    help_loc_entry->log_no = loc_entry->log_no;
+    help_loc_entry->key = loc_entry->key;
+  }
+  loc_entry->rmw_reps.tot_replies = 1;
+  loc_entry->rmw_reps.already_accepted = 1;
+  logging_proposed_but_not_locally_acked(kv_ptr, loc_entry, help_loc_entry, t_id);
+}
 
 #endif //CP_CORE_GENERIC_UTIL_H
