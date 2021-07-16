@@ -9,6 +9,8 @@
 #include "cp_inline_util.h"
 #include "od_network_context.h"
 #include <od_init_func.h>
+#include <cp_netw_structs.h>
+
 
 extern uint64_t seed;
 void cp_static_assert_compile_parameters();

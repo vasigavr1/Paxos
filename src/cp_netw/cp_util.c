@@ -2,6 +2,7 @@
 #include "od_trace_util.h"
 #include "cp_util.h"
 #include "od_generic_inline_util.h"
+#include <cp_kvs_util.h>
 
 atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 FILE* client_log[CLIENTS_PER_MACHINE];
@@ -192,10 +193,6 @@ void cp_qp_meta_mfs(context_t *ctx)
   mfs[ACC_QP_ID].send_helper = send_accs_helper;
   mfs[ACC_QP_ID].recv_handler = acc_recv_handler;
   mfs[ACC_QP_ID].recv_kvs = cp_KVS_batch_op_accs;
-
-  //mfs[ACC_REP_QP_ID].insert_helper = cp_insert_acc_rep_helper;
-  //mfs[ACC_REP_QP_ID].send_helper = cp_acc_rep_helper;
-  //mfs[ACC_REP_QP_ID].recv_handler = cp_acc_rep_recv_handler;
 
   mfs[COM_QP_ID].insert_helper = cp_insert_com_help;
   mfs[COM_QP_ID].send_helper = cp_send_coms_helper;

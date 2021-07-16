@@ -29,8 +29,6 @@ typedef struct cp_core_ctx cp_core_ctx_t;
 extern atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 
 
-
-
 typedef struct trace_op {
   uint16_t session_id;
   bool attempt_all_aboard;
