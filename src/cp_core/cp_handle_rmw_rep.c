@@ -3,7 +3,9 @@
 //
 
 #include <cp_core_interface.h>
-#include <cp_core_generic_util.h>
+#include <cp_core_common_util.h>
+
+
 
 static inline void overwrite_help_loc_entry(loc_entry_t* loc_entry,
                                             cp_rmw_rep_t* prop_rep)

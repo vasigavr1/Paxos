@@ -11,15 +11,6 @@
 #define UPDATE_EPOCH_OP_GET 119
 
 
-
-//KVS Response
-//#define RETRY_RMW_NO_ENTRIES 0
-#define RETRY_RMW 1
-#define RMW_FAILURE 2 // when a CAS has to be cut short
-#define RMW_SUCCESS 118
-
-
-
 // READ_REPLIES
 #define INVALID_OPCODE 5 // meaningless opcode to help with debugging
 // an r_rep message can be a reply to a read or a prop or an accept

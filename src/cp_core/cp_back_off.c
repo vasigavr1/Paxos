@@ -3,7 +3,8 @@
 //
 
 
-#include <cp_core_generic_util.h>
+#include <cp_core_common_util.h>
+#include <cp_netw_interface.h>
 
 
 

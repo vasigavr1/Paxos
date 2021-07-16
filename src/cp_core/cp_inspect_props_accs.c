@@ -3,8 +3,8 @@
 //
 
 
-#include <cp_core_generic_util.h>
-
+#include <cp_core_common_util.h>
+#include <cp_netw_interface.h>
 
 
 static inline void zero_out_the_rmw_reply_loc_entry_metadata(loc_entry_t* loc_entry)

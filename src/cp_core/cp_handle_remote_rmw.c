@@ -3,7 +3,7 @@
 //
 
 #include <cp_core_interface.h>
-#include <cp_core_generic_util.h>
+#include <cp_core_common_util.h>
 
 // Check the global RMW-id structure, to see if an RMW has already been committed
 static inline bool the_rmw_has_committed(mica_op_t *kv_ptr,

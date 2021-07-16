@@ -2,7 +2,7 @@
 // Created by vasilis on 15/07/2021.
 //
 
-#include <cp_core_generic_util.h>
+#include <cp_core_common_util.h>
 #include <cp_core_interface.h>
 
 static inline bool same_rmw_id_same_ts_and_invalid(mica_op_t *kv_ptr, loc_entry_t *loc_entry)

@@ -210,4 +210,33 @@ typedef struct cp_com_message_ud_req {
   cp_com_mes_t com_mes;
 } cp_com_mes_ud_t;
 
+// Give an opcode to get the capacity of the read rep messages
+static inline uint16_t get_size_from_opcode(uint8_t opcode)
+{
+  if (opcode > CARTS_EQUAL) opcode -= FALSE_POSITIVE_OFFSET;
+  switch(opcode) {
+    case LOG_TOO_SMALL:
+      return PROP_REP_LOG_TOO_LOW_SIZE;
+    case SEEN_LOWER_ACC:
+      return PROP_REP_ACCEPTED_SIZE;
+    case SEEN_HIGHER_PROP:
+    case SEEN_HIGHER_ACC:
+      return RMW_REP_ONLY_TS_SIZE;
+    case RMW_ACK_BASE_TS_STALE:
+      return PROP_REP_BASE_TS_STALE_SIZE;
+    case RMW_ID_COMMITTED:
+    case RMW_ID_COMMITTED_SAME_LOG:
+    case RMW_ACK:
+    case LOG_TOO_HIGH:
+    case NO_OP_PROP_REP:
+      return RMW_REP_SMALL_SIZE;
+    default: if (ENABLE_ASSERTIONS) {
+        my_printf(red, "Opcode %u \n", opcode);
+        assert(false);
+      }
+  }
+}
+
+
+
 #endif //CP_MESSAGES_H
