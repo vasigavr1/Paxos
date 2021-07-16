@@ -15,11 +15,6 @@ void cp_print_parameters_in_the_start();
 void cp_init_globals();
 
 
-void dump_stats_2_file(struct stats* st);
-void print_latency_stats(void);
-
-
-
 void cp_init_qp_meta(context_t *ctx);
 // Initialize the struct that holds all pending ops
 cp_ctx_t* cp_set_up_pending_ops(context_t *ctx);

@@ -5,6 +5,8 @@
 #ifndef CP_MESSAGES_H
 #define CP_MESSAGES_H
 
+#include <od_top.h>
+#include <cp_config.h>
 
 // post some extra receives to avoid spurious out_of_buffer errors
 #define RECV_WR_SAFETY_MARGIN 2

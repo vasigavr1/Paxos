@@ -5,8 +5,6 @@
 #ifndef CP_DEBUG_UTIL_H
 #define CP_DEBUG_UTIL_H
 
-#include <cp_config.h>
-#include <cp_netw_structs.h>
 #include "cp_netw_generic_util.h"
 #include "od_debug_util.h"
 #include "od_network_context.h"
@@ -376,6 +374,20 @@ static inline void checks_stats_prints_when_sending_acks(context_t *ctx,
     if (acks[m_i].ack_num > MAX_COM_COALESCE) assert(acks[m_i].credits > 1);
     if (!ENABLE_MULTICAST) assert(acks[m_i].credits <= COM_CREDITS);
     assert(acks[m_i].ack_num > 0);
+  }
+}
+
+static inline void check_when_filling_op(cp_ctx_t *cp_ctx,
+                                         trace_op_t *op,
+                                         int working_session,
+                                         bool is_rmw)
+{
+  if (ENABLE_ASSERTIONS) assert(is_rmw);
+  if (ENABLE_ASSERTIONS && !ENABLE_CLIENTS && op->opcode == FETCH_AND_ADD) {
+    assert(is_rmw);
+    assert(op->value_to_write == op->value);
+    assert(*(uint64_t *) op->value_to_write == 1);
+    assert(!cp_ctx->stall_info.stalled[working_session]);
   }
 }
 

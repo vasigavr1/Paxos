@@ -96,42 +96,6 @@ void cp_init_globals()
   memset(committed_glob_sess_rmw_id, 0, GLOBAL_SESSION_NUM * sizeof(uint64_t));
 }
 
-
-void dump_stats_2_file(struct stats* st){
-    uint8_t typeNo = 0;
-    assert(typeNo >=0 && typeNo <=3);
-    int i = 0;
-    char filename[128];
-    FILE *fp;
-    double total_MIOPS;
-    char* path = "../../results/scattered-results";
-
-    sprintf(filename, "%s/%s_s_%d_v_%d_m_%d_w_%d_r_%d-%d.csv", path,
-            "CP",
-            SESSIONS_PER_THREAD,
-            USE_BIG_OBJECTS == 1 ? ((EXTRA_CACHE_LINES * 64) + BASE_VALUE_SIZE): BASE_VALUE_SIZE,
-            MACHINE_NUM, WORKERS_PER_MACHINE,
-            WRITE_RATIO,
-            machine_id);
-    printf("%s\n", filename);
-    fp = fopen(filename, "w"); // "w" means that we are going to write on this file
-    fprintf(fp, "machine_id: %d\n", machine_id);
-
-    fprintf(fp, "comment: thread ID, total MIOPS,"
-            "reads sent, read-replies sent, acks sent, "
-            "received read-replies, received reads, received acks\n");
-    //for(i = 0; i < WORKERS_PER_MACHINE; ++i){
-    //    total_MIOPS = st->total_reqs[i];
-    //    fprintf(fp, "client: %d, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f\n",
-    //            i, total_MIOPS, st->total_reqs[i], st->reads_sent[i],
-    //            st->r_reps_sent[i], st->acks_sent[i],
-    //            st->received_r_reps[i],st->received_reads[i],
-    //            st->received_acks[i]);
-    //}
-
-    fclose(fp);
-}
-
 // If reading CAS rmws out of the trace, CASes that compare against 0 succeed the rest fail
 void randomize_op_values(trace_op_t *ops, uint16_t t_id)
 {

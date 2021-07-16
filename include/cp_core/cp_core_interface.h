@@ -6,12 +6,23 @@
 #define CP_CORE_UTIL_H
 
 
+//
+//#include <cp_config.h>
+//#include <od_generic_inline_util.h>
+//#include "cp_main.h"
 
-#include <cp_config.h>
-#include <od_generic_inline_util.h>
-#include "cp_main.h"
 
 
+
+
+#include <cp_messages.h>
+#include <stdint-gcc.h>
+#include <stdbool.h>
+
+typedef struct mica_op mica_op_t;
+typedef struct cp_core_ctx cp_core_ctx_t;
+typedef struct trace_op trace_op_t;
+typedef struct sess_stall_info sess_stall_t;
 
 void create_prop_rep(cp_prop_t *prop,
                      cp_prop_mes_t *prop_mes,
