@@ -22,16 +22,7 @@
 
 
 
-struct dbg_glob_entry {
-  ts_tuple_t last_committed_ts;
-  uint32_t last_committed_log_no;
-  struct rmw_id last_committed_rmw_id;
-  ts_tuple_t proposed_ts;
-  uint32_t proposed_log_no;
-  struct rmw_id proposed_rmw_id;
-  uint8_t last_committed_flag;
-  uint64_t prop_acc_num;
-};
+typedef struct cp_core_ctx cp_core_ctx_t;
 
 struct rmw_help_entry{
   ts_tuple_t ts;
@@ -63,10 +54,6 @@ typedef struct rmw_rep_info {
   uint32_t seen_higher_prop_version;
 
 } rmw_rep_info_t;
-
-
-
-
 
 // Entry that keep pending thread-local RMWs, the entries are accessed with session id
 typedef struct rmw_local_entry {
@@ -107,65 +94,6 @@ typedef struct rmw_local_entry {
 } loc_entry_t;
 
 
-
-typedef struct cp_com_rob {
-  uint64_t l_id; // for debug
-  uint16_t sess_id; // connection with loc entry
-  uint8_t state;
-  uint8_t acks_seen;
-} cp_com_rob_t;
-
-
-typedef struct trace_op trace_op_t;
-typedef struct cp_cp_ctx_debug cp_debug_t;
-
-typedef struct cp_ptr_to_ops {
-  void **ptr_to_ops;
-  void **ptr_to_mes;
-  bool *break_message;
-  uint16_t polled_ops;
-} cp_ptrs_to_ops_t;
-
-struct l_ids {
-  uint64_t inserted_prop_id;
-  uint64_t inserted_acc_id;
-  uint64_t inserted_com_id;
-  uint64_t applied_com_id;
-};
-
-typedef struct cp_core_ctx cp_core_ctx_t;
-
-typedef struct cp_ctx {
-  fifo_t *com_rob;
-  cp_ptrs_to_ops_t *ptrs_to_ops;
-  trace_info_t trace_info;
-  trace_op_t *ops;
-  cp_core_ctx_t *cp_core_ctx;
-  sess_stall_t stall_info;
-  struct l_ids l_ids;
-  cp_debug_t *debug_loop;
-  mica_key_t *key_per_sess;
-} cp_ctx_t;
-
-
-
-
-// A helper to debug sessions by remembering which write holds a given session
-struct session_dbg {
-	uint32_t dbg_cnt[SESSIONS_PER_THREAD];
-	//uint8_t is_release[SESSIONS_PER_THREAD];
-	//uint32_t request_id[SESSIONS_PER_THREAD];
-};
-
-typedef struct cp_cp_ctx_debug {
-  bool slept;
-  uint64_t loop_counter;
-  uint32_t sizes_dbg_cntr;
-  uint64_t debug_lids;
-  uint32_t release_rdy_dbg_cnt;
-  struct session_dbg *ses_dbg;
-} cp_debug_t;
-
 // Registering data structure
 extern atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 
@@ -174,16 +102,6 @@ typedef struct rmw_rep_flag {
   uint8_t unused;
   uint16_t op_i;
 } rmw_rep_flag_t;
-
-
-
-typedef struct thread_stats {
-  uint64_t total_reqs;
-  od_qp_stats_t qp_stats[QP_NUM];
-  uint64_t cancelled_rmws;
-  uint64_t all_aboard_rmws; // completed ones
-} t_stats_t;
-
 
 
 typedef struct trace_op {
@@ -200,7 +118,15 @@ typedef struct trace_op {
   uint32_t real_val_len; // this is the value length the client is interested in
 } trace_op_t;
 
+typedef struct thread_stats {
+  uint64_t total_reqs;
+  od_qp_stats_t qp_stats[QP_NUM];
+  uint64_t cancelled_rmws;
+  uint64_t all_aboard_rmws; // completed ones
+} t_stats_t;
 extern t_stats_t t_stats[WORKERS_PER_MACHINE];
+
+
 struct mica_op;
 extern FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 

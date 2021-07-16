@@ -26,4 +26,18 @@ typedef struct cp_core_ctx {
   uint16_t t_id;
 } cp_core_ctx_t;
 
+struct dbg_glob_entry {
+  ts_tuple_t last_committed_ts;
+  uint32_t last_committed_log_no;
+  struct rmw_id last_committed_rmw_id;
+  ts_tuple_t proposed_ts;
+  uint32_t proposed_log_no;
+  struct rmw_id proposed_rmw_id;
+  uint8_t last_committed_flag;
+  uint64_t prop_acc_num;
+};
+
+
+
+
 #endif //ODYSSEY_CP_CORE_STRUCTS_H

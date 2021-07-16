@@ -5,6 +5,20 @@
 #include <cp_core_interface.h>
 #include <cp_core_common_util.h>
 
+FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
+
+void open_rmw_log_files(uint16_t t_id)
+{
+  if (VERIFY_PAXOS || PRINT_LOGS || COMMIT_LOGS) {
+    char fp_name[50];
+    my_printf(green, "WILL PRINT LOGS IN THIS RUN \n");
+    sprintf(fp_name, "../paxos/src/PaxosVerifier/thread%u.out",  t_id);
+    rmw_verify_fp[t_id] = fopen(fp_name, "w+");
+    assert(rmw_verify_fp[t_id] != NULL);
+  }
+}
+
+
 loc_entry_t *cp_init_loc_entry(uint16_t t_id)
 {
   loc_entry_t *rmw_entries = calloc(LOCAL_PROP_NUM, sizeof(loc_entry_t));
@@ -29,6 +43,7 @@ cp_core_ctx_t* cp_init_cp_core_ctx(void *cp_ctx,
                                    void *ctx,
                                    uint16_t t_id)
 {
+  open_rmw_log_files(t_id);
   cp_core_ctx_t *cp_core_ctx = calloc(1, sizeof(cp_core_ctx_t));
   cp_core_ctx->rmw_entries = cp_init_loc_entry(t_id);
   cp_core_ctx->appl_ctx = (void *) cp_ctx;

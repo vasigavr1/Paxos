@@ -7,10 +7,9 @@
 
 
 #include <stdint.h>
-#include <cp_config.h>
 #include <od_netw_func.h>
-#include "cp_main.h"
 #include "od_generic_inline_util.h"
+#include <cp_netw_structs.h>
 
 
 

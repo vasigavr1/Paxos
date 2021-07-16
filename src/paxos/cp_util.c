@@ -3,9 +3,7 @@
 #include "cp_util.h"
 #include "od_generic_inline_util.h"
 
-atomic_bool print_for_debug;
 atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
-FILE* rmw_verify_fp[WORKERS_PER_MACHINE];
 FILE* client_log[CLIENTS_PER_MACHINE];
 
 

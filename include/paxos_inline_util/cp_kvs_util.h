@@ -7,7 +7,7 @@
 
 #include <cp_config.h>
 #include "od_kvs.h"
-#include "cp_generic_util.h"
+#include "cp_netw_generic_util.h"
 #include "cp_debug_util.h"
 #include "od_wrkr_side_calls.h"
 #include "cp_core_interface.h"

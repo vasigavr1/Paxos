@@ -5,7 +5,7 @@
 #include "od_hrd.h"
 
 #include "od_inline_util.h"
-#include "cp_generic_util.h"
+#include "cp_netw_generic_util.h"
 #include "cp_kvs_util.h"
 #include "cp_debug_util.h"
 #include "cp_reserve_stations_util.h"

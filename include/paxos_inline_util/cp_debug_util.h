@@ -6,8 +6,8 @@
 #define CP_DEBUG_UTIL_H
 
 #include <cp_config.h>
-#include "cp_main.h"
-#include "cp_generic_util.h"
+#include <cp_netw_structs.h>
+#include "cp_netw_generic_util.h"
 #include "od_debug_util.h"
 #include "od_network_context.h"
 
@@ -26,9 +26,6 @@ static inline void cp_checks_at_loop_start(context_t *ctx)
     if (ctx->t_id == 0) my_printf(yellow, "Workers are going to sleep for %u secs\n", seconds);
     sleep(seconds); cp_ctx->debug_loop->slept = true;
     if (ctx->t_id == 0) my_printf(green, "Worker %u is back\n", ctx->t_id);
-  }
-  if (ENABLE_INFO_DUMP_ON_STALL && print_for_debug) {
-    //print_verbouse_debug_info(cp_ctx, t_id, credits);
   }
   if (ENABLE_ASSERTIONS) {
     if (ENABLE_ASSERTIONS && ctx->t_id == 0)  time_approx++;
