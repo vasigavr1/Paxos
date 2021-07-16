@@ -7,6 +7,12 @@
 
 #include <cp_main.h>
 
+typedef struct rmw_rep_flag {
+  bool is_accept;
+  uint8_t unused;
+  uint16_t op_i;
+} rmw_rep_flag_t;
+
 typedef struct cp_com_rob {
   uint64_t l_id; // for debug
   uint16_t sess_id; // connection with loc entry

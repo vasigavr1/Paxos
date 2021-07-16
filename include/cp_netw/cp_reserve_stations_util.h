@@ -14,11 +14,6 @@
 #include "cp_core_interface.h"
 #include "cp_config.h"
 
-//-------------------------------------------------------------------------------------
-// -------------------------------FORWARD DECLARATIONS--------------------------------
-//-------------------------------------------------------------------------------------
-
-
 
 // Fill the trace_op to be passed to the KVS. Returns whether no more requests can be processed
 static inline bool fill_trace_op(context_t *ctx,
@@ -75,53 +70,6 @@ static inline void increment_prop_acc_credits(context_t *ctx,
 }
 
 
-static inline void cp_fill_prop(cp_prop_t *prop,
-                                loc_entry_t *loc_entry,
-                                uint16_t t_id)
-{
-  check_loc_entry_metadata_is_reset(loc_entry, "inserting prop", t_id);
-  assign_ts_to_netw_ts(&prop->ts, &loc_entry->new_ts);
-  memcpy(&prop->key, (void *)&loc_entry->key, KEY_SIZE);
-  prop->opcode = PROPOSE_OP;
-  prop->l_id = loc_entry->l_id;
-  prop->t_rmw_id = loc_entry->rmw_id.id;
-  prop->log_no = loc_entry->log_no;
-  if (!loc_entry->base_ts_found)
-    prop->base_ts = loc_entry->base_ts;
-  else prop->base_ts.version = DO_NOT_CHECK_BASE_TS;
-  if (ENABLE_ASSERTIONS) {
-    assert(prop->ts.version >= PAXOS_TS);
-  }
-}
-
-static inline void cp_fill_acc(cp_acc_t *acc,
-                               loc_entry_t *loc_entry,
-                               bool helping,
-                               uint16_t t_id)
-{
-  check_loc_entry_metadata_is_reset(loc_entry, "inserting_accept", t_id);
-  if (ENABLE_ASSERTIONS) assert(loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED);
-  if (DEBUG_RMW) {
-    my_printf(yellow, "Wrkr %u Inserting an accept, l_id %lu, "
-                      "rmw_id %lu, log %u,  helping %u,\n",
-              t_id, loc_entry->l_id, loc_entry->rmw_id.id,
-              loc_entry->log_no, helping);
-  }
-
-  acc->l_id = loc_entry->l_id;
-  acc->t_rmw_id = loc_entry->rmw_id.id;
-  acc->base_ts = loc_entry->base_ts;
-  assign_ts_to_netw_ts(&acc->ts, &loc_entry->new_ts);
-  memcpy(&acc->key, &loc_entry->key, KEY_SIZE);
-  acc->opcode = ACCEPT_OP;
-  if (!helping && !loc_entry->rmw_is_successful)
-    memcpy(acc->value, loc_entry->value_to_read, (size_t) RMW_VALUE_SIZE);
-  else memcpy(acc->value, loc_entry->value_to_write, (size_t) RMW_VALUE_SIZE);
-  acc->log_no = loc_entry->log_no;
-  acc->val_len = (uint8_t) loc_entry->rmw_val_len;
-}
-
-
 static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
                                        void *source, uint32_t source_flag)
 {
@@ -130,9 +78,8 @@ static inline void cp_insert_prop_help(context_t *ctx, void* prop_ptr,
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
 
   cp_prop_t *prop = (cp_prop_t *) prop_ptr;
-  loc_entry_t *loc_entry = (loc_entry_t *) source;
 
-  cp_fill_prop(prop, loc_entry, ctx->t_id);
+  cp_fill_prop(prop, source, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   cp_prop_mes_t *prop_mes = (cp_prop_mes_t *) get_fifo_push_slot(send_fifo);
@@ -200,8 +147,7 @@ static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
 
   cp_acc_t *acc = (cp_acc_t *) acc_ptr;
-  loc_entry_t *loc_entry = (loc_entry_t *) source;
-  cp_fill_acc(acc, loc_entry, (bool) source_flag, ctx->t_id);
+  cp_fill_acc(acc, source, (bool) source_flag, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   cp_acc_mes_t *acc_mes = (cp_acc_mes_t *) get_fifo_push_slot(send_fifo);
@@ -214,15 +160,15 @@ static inline void cp_insert_acc_help(context_t *ctx, void* acc_ptr,
 }
 
 static inline void fill_com_rob_entry(cp_ctx_t *cp_ctx,
-                                      loc_entry_t *loc_entry)
+                                      uint16_t sess_id)
 {
   cp_com_rob_t *com_rob = (cp_com_rob_t *) get_fifo_push_slot(cp_ctx->com_rob);
   if (ENABLE_ASSERTIONS) {
     assert(com_rob->state == INVALID);
-    assert(cp_ctx->stall_info.stalled[loc_entry->sess_id]);
+    assert(cp_ctx->stall_info.stalled[sess_id]);
   }
   com_rob->state = VALID;
-  com_rob->sess_id = loc_entry->sess_id;
+  com_rob->sess_id = sess_id;
   com_rob->acks_seen = 0;
   com_rob->l_id = cp_ctx->l_ids.inserted_com_id;
   fifo_incr_push_ptr(cp_ctx->com_rob);
@@ -236,9 +182,8 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
   fifo_t *send_fifo = qp_meta->send_fifo;
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   cp_com_t *com = (cp_com_t *) com_ptr;
-  loc_entry_t *loc_entry = (loc_entry_t *) source;
-
-  fill_commit_message_from_l_entry(com, loc_entry, source_flag, ctx->t_id);
+  uint16_t sess_id =
+    fill_commit_message_from_l_entry(com, source, source_flag, ctx->t_id);
 
   slot_meta_t *slot_meta = get_fifo_slot_meta_push(send_fifo);
   if (com->opcode == COMMIT_OP_NO_VAL)
@@ -251,7 +196,7 @@ static inline void cp_insert_com_help(context_t *ctx, void* com_ptr,
     fifo_set_push_backward_ptr(send_fifo, cp_ctx->com_rob->push_ptr); // for debug
   }
 
-  fill_com_rob_entry(cp_ctx, loc_entry);
+  fill_com_rob_entry(cp_ctx, sess_id);
   cp_ctx->l_ids.inserted_com_id++;
 }
 

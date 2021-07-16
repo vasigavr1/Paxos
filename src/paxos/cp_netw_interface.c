@@ -27,7 +27,7 @@ inline void cp_rmw_rep_insert(void *ctx,
 
 
 inline void cp_prop_insert(void *ctx,
-                           loc_entry_t *loc_entry)
+                           void *loc_entry)
 {
   od_insert_mes((context_t *) ctx, PROP_QP_ID,
                 (uint32_t) PROP_SIZE,
@@ -37,7 +37,7 @@ inline void cp_prop_insert(void *ctx,
 }
 
 inline void cp_acc_insert(void *ctx,
-                          loc_entry_t *loc_entry,
+                          void *loc_entry,
                           bool helping)
 {
   od_insert_mes((context_t*) ctx, ACC_QP_ID,
@@ -48,7 +48,7 @@ inline void cp_acc_insert(void *ctx,
 }
 
 inline bool cp_com_insert(void *ctx,
-                          loc_entry_t *loc_entry,
+                          void *loc_entry,
                           uint32_t state)
 {
   context_t * od_ctx = (context_t *) ctx;

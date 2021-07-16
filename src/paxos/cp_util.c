@@ -78,8 +78,6 @@ void cp_print_parameters_in_the_start()
     printf("MICA OP capacity %ld/%d added padding %d  \n",
            sizeof(mica_op_t), MICA_OP_SIZE, MICA_OP_PADDING_SIZE);
 
-
-    printf("Rmw-local_entry %ld \n", sizeof(loc_entry_t));
     printf("quorum-num %d \n", QUORUM_NUM);
   }
 }

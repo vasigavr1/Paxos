@@ -15,14 +15,14 @@ void cp_rmw_rep_insert(void *ctx,
 
 
 void cp_prop_insert(void *ctx,
-                    loc_entry_t *loc_entry);
+                    void *loc_entry);
 
 void cp_acc_insert(void *ctx,
-                   loc_entry_t *loc_entry,
+                   void *loc_entry,
                    bool helping);
 
 bool cp_com_insert(void *ctx,
-                   loc_entry_t *loc_entry,
+                   void *loc_entry,
                    uint32_t state);
 
 

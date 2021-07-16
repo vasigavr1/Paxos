@@ -11,7 +11,7 @@ void open_rmw_log_files(uint16_t t_id)
 {
   if (VERIFY_PAXOS || PRINT_LOGS || COMMIT_LOGS) {
     char fp_name[50];
-    my_printf(green, "WILL PRINT LOGS IN THIS RUN \n");
+    if (t_id == 0) my_printf(green, "WILL PRINT LOGS IN THIS RUN \n");
     sprintf(fp_name, "../paxos/src/PaxosVerifier/thread%u.out",  t_id);
     rmw_verify_fp[t_id] = fopen(fp_name, "w+");
     assert(rmw_verify_fp[t_id] != NULL);

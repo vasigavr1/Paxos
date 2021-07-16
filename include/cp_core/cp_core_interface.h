@@ -63,10 +63,18 @@ void on_receiving_remote_commit(mica_op_t *kv_ptr,
                                 uint16_t t_id);
 
 // Fill a write message with a commit
-void fill_commit_message_from_l_entry(cp_com_t *com,
-                                      loc_entry_t *loc_entry,
-                                      uint8_t broadcast_state,
-                                      uint16_t t_id);
+uint16_t fill_commit_message_from_l_entry(cp_com_t *com,
+                                          void *loc_entry,
+                                          uint8_t broadcast_state,
+                                          uint16_t t_id);
+void cp_fill_prop(cp_prop_t *prop,
+                  void *loc_entry,
+                  uint16_t t_id);
+
+void cp_fill_acc(cp_acc_t *acc,
+                 void *loc_entry,
+                 bool helping,
+                 uint16_t t_id);
 
 cp_core_ctx_t* cp_init_cp_core_ctx(void *cp_ctx,
                                    sess_stall_t *stall_info,

@@ -69,19 +69,6 @@ static inline void check_received_rmw_in_KVS(void **ops,
   }
 }
 
-// Print the rep info received for a propose or an accept
-static inline void print_rmw_rep_info(loc_entry_t *loc_entry, uint16_t t_id) {
-  struct rmw_rep_info *rmw_rep = &loc_entry->rmw_reps;
-  my_printf(yellow, "Wrkr %u Printing rmw_rep for sess %u state %u helping flag %u \n"
-              "Tot_replies %u \n acks: %u \n rmw_id_committed: %u \n log_too_small %u\n"
-              "already_accepted : %u\n seen_higher_prop : %u\n "
-              "log_too_high: %u \n",
-            t_id, loc_entry->sess_id, loc_entry->state, loc_entry->helping_flag,
-            rmw_rep->tot_replies,
-            rmw_rep->acks, rmw_rep->rmw_id_commited, rmw_rep->log_too_small,
-            rmw_rep->already_accepted,
-            rmw_rep->seen_higher_prop_acc, rmw_rep->log_too_high);
-}
 
 
 // When pulling a new req from the trace, check the req and the working session
@@ -283,28 +270,7 @@ static inline void  cp_check_ack_and_print(context_t *ctx,
 }
 
 
-static inline void check_loc_entry_metadata_is_reset(loc_entry_t* loc_entry,
-                                                     const char *message,
-                                                     uint16_t t_id)
-{
-  if (loc_entry->helping_flag != PROPOSE_NOT_LOCALLY_ACKED &&
-      loc_entry->helping_flag != PROPOSE_LOCALLY_ACCEPTED) {
-    if (ENABLE_ASSERTIONS) { // make sure the loc_entry is correctly set-up
-      if (loc_entry->help_loc_entry == NULL) {
-        //my_printf(red, "The help_loc_ptr is NULL. The reason is typically that help_loc_entry was passed to the function "
-        //           "instead of loc entry to check \n");
-        assert(loc_entry->state == INVALID_RMW);
-      } else {
-        if (loc_entry->help_loc_entry->state != INVALID_RMW) {
-          my_printf(red, "Wrkr %u: %s \n", t_id, message);
-          assert(false);
-        }
-        assert(loc_entry->rmw_reps.tot_replies == 1);
-        assert(loc_entry->back_off_cntr == 0);
-      }
-    }
-  }
-}
+
 
 
 static inline void check_when_polling_for_props(context_t* ctx,
