@@ -10,7 +10,7 @@
 #include "od_wrkr_side_calls.h"
 #include "od_latency_util.h"
 #include <cp_netw_structs.h>
-#include "cp_debug_util.h"
+#include "cp_netw_debug.h"
 #include "cp_core_interface.h"
 #include "cp_config.h"
 

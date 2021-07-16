@@ -1,25 +1,18 @@
 //
-// Created by vasilis on 11/05/20.
+// Created by vasilis on 16/07/2021.
 //
 
-#ifndef CP_KVS_UTILITY_H
-#define CP_KVS_UTILITY_H
-
-#include <cp_config.h>
-#include "od_kvs.h"
-#include "cp_netw_generic_util.h"
-#include "cp_debug_util.h"
-#include "od_wrkr_side_calls.h"
-#include "cp_core_interface.h"
+#include <cp_kvs.h>
+#include <od_kvs.h>
+#include <cp_netw_debug.h>
+#include <cp_core_interface.h>
 #include <cp_netw_interface.h>
 
 
-
-
-static inline void cp_KVS_batch_op_trace(uint16_t op_num,
-                                         trace_op_t *op,
-                                         cp_ctx_t *cp_ctx,
-                                         uint16_t t_id)
+inline void cp_KVS_batch_op_trace(uint16_t op_num,
+                                  trace_op_t *op,
+                                  cp_ctx_t *cp_ctx,
+                                  uint16_t t_id)
 {
   uint16_t op_i;
   if (ENABLE_ASSERTIONS) assert (op_num <= MAX_OP_BATCH);
@@ -84,13 +77,13 @@ static inline void cp_KVS_batch_op_rmws(context_t *ctx, bool is_accept)
 }
 
 
-static inline void cp_KVS_batch_op_props(context_t *ctx)
+inline void cp_KVS_batch_op_props(context_t *ctx)
 {
   cp_KVS_batch_op_rmws(ctx, false);
 }
 
 
-static inline void cp_KVS_batch_op_accs(context_t *ctx)
+inline void cp_KVS_batch_op_accs(context_t *ctx)
 {
   cp_KVS_batch_op_rmws(ctx, true);
 }
@@ -101,7 +94,7 @@ static inline void cp_KVS_batch_op_accs(context_t *ctx)
 
 
 
-static inline void cp_KVS_batch_op_coms(context_t *ctx)
+inline void cp_KVS_batch_op_coms(context_t *ctx)
 {
   cp_ctx_t *cp_ctx = (cp_ctx_t *) ctx->appl_ctx;
   cp_ptrs_to_ops_t *ptrs_to_com = cp_ctx->ptrs_to_ops;
@@ -133,6 +126,3 @@ static inline void cp_KVS_batch_op_coms(context_t *ctx)
     on_receiving_remote_commit(kv_ptr[op_i], com, ptrs_to_com->ptr_to_mes[op_i], op_i, ctx->t_id);
   }
 }
-
-
-#endif //CP_KVS_UTILITY_H

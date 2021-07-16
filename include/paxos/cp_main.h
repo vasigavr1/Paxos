@@ -2,16 +2,13 @@
 #define CP_MAIN_H
 
 #include <stdint.h>
-#include <pthread.h>
 #include <stdint-gcc.h>
-#include <od_fifo.h>
-#include "od_city.h"
 #include "cp_config.h"
 #include "cp_messages.h"
 #include "cp_buffer_sizes.h"
-#include "od_stats.h"
+//#include "od_stats.h"
 
-
+typedef struct fifo fifo_t;
 
 #define LOCAL_PROP_NUM_ (SESSIONS_PER_THREAD)
 #define LOCAL_PROP_NUM (ENABLE_RMWS == 1 ? LOCAL_PROP_NUM_ : 0)

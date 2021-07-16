@@ -1,11 +1,26 @@
-#include <od_rdma_gen_util.h>
+#include <cp_main_loop.h>
+#include <cp_netw_insert.h>
 #include "od_trace_util.h"
 #include "cp_util.h"
 #include "od_generic_inline_util.h"
-#include <cp_kvs_util.h>
+#include <cp_kvs.h>
+#include <cp_core_interface.h>
+#include <cp_netw_structs.h>
+#include "od_network_context.h"
+#include <od_init_func.h>
 
 atomic_uint_fast64_t committed_glob_sess_rmw_id[GLOBAL_SESSION_NUM];
 FILE* client_log[CLIENTS_PER_MACHINE];
+
+void cp_init_functionality(int argc, char *argv[])
+{
+  cp_print_parameters_in_the_start();
+  od_generic_static_assert_compile_parameters();
+  cp_static_assert_compile_parameters();
+  od_generic_init_globals(QP_NUM);
+  cp_init_globals();
+  od_handle_program_inputs(argc, argv);
+}
 
 
 void cp_static_assert_compile_parameters()
@@ -17,24 +32,18 @@ void cp_static_assert_compile_parameters()
   static_assert(!(COMMIT_LOGS && (PRINT_LOGS || VERIFY_PAXOS)), " ");
   static_assert(sizeof(struct key) == KEY_SIZE, " ");
   static_assert(sizeof(struct network_ts_tuple) == TS_TUPLE_SIZE, "");
-//  static_assert(sizeof(struct cache_key) ==  KEY_SIZE, "");
-//  static_assert(sizeof(cache_meta) == 8, "");
 
  static_assert(INVALID_RMW == 0, "the initial state of a mica_op must be invalid");
   static_assert(MACHINE_NUM < 16, "the bit_vec vector is 16 bits-- can be extended");
 
   static_assert(VALUE_SIZE >= 2, "first round of release can overload the first 2 bytes of value");
-  //static_assert(VALUE_SIZE > RMW_BYTE_OFFSET, "");
+
   static_assert(VALUE_SIZE == (RMW_VALUE_SIZE), "RMW requires the value to be at least this many bytes");
   static_assert(MACHINE_NUM <= 255, ""); // for deprecated reasons
-
-  // ACCEPTS
-
 
   static_assert(PROP_MES_SIZE <= MTU, "");
   static_assert(PROP_REP_MES_SIZE <= MTU, "");
 
-  // COALESCING
   static_assert(PROP_COALESCE < 256, "");
   static_assert(PROP_COALESCE > 0, "");
   static_assert(ACC_COALESCE > 0, "");
@@ -48,7 +57,6 @@ void cp_static_assert_compile_parameters()
   static_assert(sizeof(cp_acc_t) == ACC_SIZE, "");
   static_assert(PROP_REP_ACCEPTED_SIZE == PROP_REP_LOG_TOO_LOW_SIZE + 1, "");
   static_assert(sizeof(cp_rmw_rep_t) == PROP_REP_ACCEPTED_SIZE, "");
-  //static_assert(sizeof(cp_rmw_rep_mes_t) == PROP_REP_MES_SIZE, "");
   static_assert(sizeof(cp_com_t) == COM_SIZE, "");
   // UD- REQS
   static_assert(sizeof(cp_prop_mes_ud_t) == PROP_RECV_SIZE, "");

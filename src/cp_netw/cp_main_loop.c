@@ -2,10 +2,11 @@
 // Created by vasilis on 16/07/2021.
 //
 
-#include <cp_inline_util.h>
-#include "cp_netw_generic_util.h"
-
-#include "cp_kvs_util.h"
+#include <cp_main_loop.h>
+#include <cp_netw_generic_util.h>
+#include <cp_netw_debug.h>
+#include <cp_core_interface.h>
+#include <cp_kvs.h>
 
 static inline void cp_apply_acks(context_t *ctx,
                                  ctx_ack_mes_t *ack)

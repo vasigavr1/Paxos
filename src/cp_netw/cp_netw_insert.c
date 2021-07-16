@@ -3,8 +3,8 @@
 //
 
 #include "cp_core_interface.h"
-#include "cp_debug_util.h"
-#include <cp_inline_util.h>
+#include "cp_netw_debug.h"
+#include <cp_netw_insert.h>
 
 
 
