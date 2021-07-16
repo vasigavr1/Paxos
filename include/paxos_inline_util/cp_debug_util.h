@@ -98,12 +98,6 @@ static inline void check_trace_req(cp_ctx_t *cp_ctx, trace_t *trace, trace_op_t 
                                    COMPARE_AND_SWAP_STRONG);
     assert(op->opcode == trace->opcode);
     assert(!cp_ctx->stall_info.stalled[working_session]);
-    if (ENABLE_RMWS && cp_ctx->cp_core_ctx->rmw_entries[working_session].state != INVALID_RMW) {
-      my_printf(cyan, "wrk %u  Session %u has loc_entry state %u , helping flag %u\n", t_id,
-                working_session, cp_ctx->cp_core_ctx->rmw_entries[working_session].state,
-                cp_ctx->cp_core_ctx->rmw_entries[working_session].helping_flag);
-      assert(false);
-    }
   }
 }
 

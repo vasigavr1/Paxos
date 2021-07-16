@@ -144,8 +144,6 @@ static inline bool opcode_is_rmw_rep(uint8_t opcode)
   return (opcode >= RMW_ACK && opcode <= NO_OP_PROP_REP);
 }
 
-
-
 static inline bool rmw_ids_are_equal(struct rmw_id *id1, struct rmw_id *id2)
 {
   return id1->id == id2->id;

@@ -64,3 +64,5 @@ inline void insert_rmw(cp_core_ctx_t *cp_core_ctx,
   }
   else handle_loc_entry_cas_failed_first_time(loc_entry, cp_core_ctx, op, t_id);
 }
+
+

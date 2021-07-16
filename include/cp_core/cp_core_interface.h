@@ -8,6 +8,7 @@
 
 
 #include <cp_config.h>
+#include <od_generic_inline_util.h>
 #include "cp_main.h"
 
 
@@ -67,10 +68,10 @@ void fill_commit_message_from_l_entry(cp_com_t *com,
                                       uint8_t broadcast_state,
                                       uint16_t t_id);
 
-
-
-
-
+cp_core_ctx_t* cp_init_cp_core_ctx(void *cp_ctx,
+                                   sess_stall_t *stall_info,
+                                   void *ctx,
+                                   uint16_t t_id);
 
 
 #endif //CP_CORE_UTIL_H

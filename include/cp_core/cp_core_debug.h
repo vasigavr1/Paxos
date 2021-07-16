@@ -3,6 +3,7 @@
 
 #include <cp_config.h>
 #include <cp_core_generic_util.h>
+#include <cp_core_structs.h>
 #include "cp_main.h"
 #include "od_debug_util.h"
 #include "od_network_context.h"

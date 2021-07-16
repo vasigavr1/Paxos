@@ -283,36 +283,10 @@ cp_debug_t *init_debug_loop_struct()
   return loop_dbg;
 }
 
-loc_entry_t *cp_init_loc_entry(uint16_t t_id)
-{
-  loc_entry_t *rmw_entries = calloc(LOCAL_PROP_NUM, sizeof(loc_entry_t));
-  for (uint32_t i = 0; i < LOCAL_PROP_NUM; i++) {
-    loc_entry_t *loc_entry = &rmw_entries[i];
-    loc_entry->sess_id = (uint16_t) i;
-    loc_entry->glob_sess_id = get_glob_sess_id((uint8_t)machine_id, t_id, (uint16_t) i);
-    loc_entry->l_id = (uint64_t) loc_entry->sess_id;
-    loc_entry->rmw_id.id = (uint64_t) loc_entry->glob_sess_id;
-    loc_entry->help_rmw = (struct rmw_help_entry *) calloc(1, sizeof(struct rmw_help_entry));
-    loc_entry->help_loc_entry = (loc_entry_t *) calloc(1, sizeof(loc_entry_t));
-    loc_entry->help_loc_entry->sess_id = (uint16_t) i;
-    loc_entry->help_loc_entry->helping_flag = IS_HELPER;
-    loc_entry->help_loc_entry->glob_sess_id = loc_entry->glob_sess_id;
-    loc_entry->state = INVALID_RMW;
-  }
-  return rmw_entries;
-}
 
 
-cp_core_ctx_t* cp_init_cp_core_ctx(cp_ctx_t *cp_ctx, context_t *ctx)
-{
-  cp_core_ctx_t *cp_core_ctx = calloc(1, sizeof(cp_core_ctx_t));
-  cp_core_ctx->rmw_entries = cp_init_loc_entry(ctx->t_id);
-  cp_core_ctx->appl_ctx = (void *) cp_ctx;
-  cp_core_ctx->stall_info = &cp_ctx->stall_info;
-  cp_core_ctx->netw_ctx = (void *) ctx;
-  cp_core_ctx->t_id = ctx->t_id;
-  return cp_core_ctx;
-}
+
+
 
 // Initialize the pending ops struct
 cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)
@@ -340,7 +314,10 @@ cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)
 
   cp_ctx->debug_loop = init_debug_loop_struct();
 
-  cp_ctx->cp_core_ctx = cp_init_cp_core_ctx(cp_ctx, ctx);
+  cp_ctx->cp_core_ctx = cp_init_cp_core_ctx((void*) cp_ctx,
+                                            &cp_ctx->stall_info,
+                                            (void*)ctx,
+                                            ctx->t_id);
   return cp_ctx;
 }
 

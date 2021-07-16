@@ -6,6 +6,7 @@
 #include <cp_core_common_util.h>
 
 
+
 static inline void process_commit_flags(void* rmw, loc_entry_t *loc_entry, uint8_t *flag)
 {
   struct commit *com = (struct commit *) rmw;

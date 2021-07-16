@@ -133,13 +133,7 @@ struct l_ids {
   uint64_t applied_com_id;
 };
 
-typedef struct cp_core_ctx {
-  loc_entry_t *rmw_entries;
-  sess_stall_t *stall_info;
-  void* appl_ctx;
-  void* netw_ctx;
-  uint16_t t_id;
-} cp_core_ctx_t;
+typedef struct cp_core_ctx cp_core_ctx_t;
 
 typedef struct cp_ctx {
   fifo_t *com_rob;
@@ -180,18 +174,6 @@ typedef struct rmw_rep_flag {
   uint8_t unused;
   uint16_t op_i;
 } rmw_rep_flag_t;
-
-
-typedef struct commit_info {
-  bool overwrite_kv;
-  bool no_value;
-  uint8_t flag;
-  uint32_t log_no;
-  ts_tuple_t base_ts;
-  rmw_id_t rmw_id;
-  uint8_t *value;
-  const char* message;
-} commit_info_t;
 
 
 
