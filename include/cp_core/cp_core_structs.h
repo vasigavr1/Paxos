@@ -21,7 +21,7 @@ typedef struct commit_info {
 struct rmw_help_entry{
   ts_tuple_t ts;
   uint8_t opcode;
-  uint8_t value[RMW_VALUE_SIZE];
+  uint8_t value[VALUE_SIZE];
   struct rmw_id rmw_id;
   uint32_t log_no;
   // RMW that has not grabbed a global entry uses this to

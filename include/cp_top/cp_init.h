@@ -1,8 +1,8 @@
 #ifndef CP_UTILS_H
 #define CP_UTILS_H
 
+#include <stdint.h>
 
-#include "cp_main.h"
 
 
 typedef struct cp_ctx cp_ctx_t;

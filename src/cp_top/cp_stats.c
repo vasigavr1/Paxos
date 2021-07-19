@@ -1,6 +1,9 @@
-//#include "cp_util.h"
-#include "cp_stats.h"
-#include "cp_main.h"
+#include <od_stats.h>
+#include <od_top.h>
+#include <cp_opcodes.h>
+#include <cp_stats.h>
+#include <cp_config.h>
+
 
 void print_latency_stats(void);
 

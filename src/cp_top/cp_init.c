@@ -1,7 +1,7 @@
 #include <cp_main_loop.h>
 #include <cp_netw_insert.h>
 #include "od_trace_util.h"
-#include "cp_util.h"
+#include "cp_init.h"
 #include "od_generic_inline_util.h"
 #include <cp_kvs.h>
 #include <cp_core_interface.h>
@@ -247,11 +247,6 @@ cp_debug_t *init_debug_loop_struct()
   }
   return loop_dbg;
 }
-
-
-
-
-
 
 // Initialize the pending ops struct
 cp_ctx_t* cp_set_up_pending_ops(context_t *ctx)

@@ -7,7 +7,6 @@
 
 
 #include <cp_config.h>
-#include <cp_main.h>
 #include <od_wrkr_side_calls.h>
 #include <od_generic_inline_util.h>
 #include <cp_core_structs.h>

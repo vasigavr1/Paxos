@@ -8,8 +8,9 @@
 
 #include <stdint.h>
 #include <od_netw_func.h>
-#include "od_generic_inline_util.h"
+#include <od_generic_inline_util.h>
 #include <cp_netw_structs.h>
+#include <cp_messages.h>
 
 
 

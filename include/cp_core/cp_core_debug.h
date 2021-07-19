@@ -4,7 +4,8 @@
 #include <cp_config.h>
 #include <cp_core_generic_util.h>
 #include <cp_core_structs.h>
-#include "cp_main.h"
+//#include "cp_main.h"
+#include <cp_messages.h>
 #include "od_debug_util.h"
 #include "od_network_context.h"
 
@@ -844,11 +845,6 @@ static inline void check_find_local_and_handle_rmw_rep(loc_entry_t *loc_entry_ar
              r_rep_i, rep->opcode, rep_mes->rmw_rep[0].opcode, byte_ptr);
     }
     assert(opcode_is_rmw_rep(rep->opcode));
-    //    if (prop_info->l_id <= rep->l_id)
-    //      my_printf(red, "Wrkr %u, rep_i %u, opcode %u, is_accept %d, incoming rep l_id %u, max prop lid %u \n",
-    //                t_id, r_rep_i, rep->opcode, is_accept, rep->l_id, prop_info->l_id);
-    //
-    //    assert(prop_info->l_id > rep->l_id);
   }
   //my_printf(cyan, "RMW rep opcode %u, l_id %u \n", rep->opcode, rep->l_id);
 

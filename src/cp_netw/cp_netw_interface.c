@@ -5,6 +5,7 @@
 #include <cp_netw_interface.h>
 #include <od_netw_func.h>
 #include <cp_netw_structs.h>
+#include <cp_messages.h>
 
 
 inline void cp_rmw_rep_insert(void *ctx,

@@ -5,7 +5,9 @@
 #ifndef ODYSSEY_CP_NETW_STRUCTS_H
 #define ODYSSEY_CP_NETW_STRUCTS_H
 
-#include <cp_main.h>
+
+typedef struct cp_core_ctx cp_core_ctx_t;
+typedef struct trace_op trace_op_t;
 
 typedef struct rmw_rep_flag {
   bool is_accept;
